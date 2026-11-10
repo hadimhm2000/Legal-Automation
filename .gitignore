@@ -12,3 +12,4 @@ logs/
 .pytest_cache/
 debug*.png
 session*.json
+backups/

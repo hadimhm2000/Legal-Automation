@@ -1,0 +1,20 @@
+[Unit]
+Description=Legal Automation Bale bot (ربات اتوماسیون ویژه خدمات حقوقی)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=bot
+WorkingDirectory=/home/bot/Legal-Automation
+ExecStart=/home/bot/Legal-Automation/.venv/bin/python bot_main.py
+Restart=always
+RestartSec=10
+Environment=TZ=Asia/Tehran
+Environment=PYTHONUNBUFFERED=1
+# سخت‌گیری امنیتی
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
