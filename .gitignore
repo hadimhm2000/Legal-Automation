@@ -13,3 +13,5 @@ logs/
 debug*.png
 session*.json
 backups/
+backups/
+browsers/
