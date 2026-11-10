@@ -1,0 +1,11 @@
+aiogram>=3.4.0,<4
+aiosqlite>=0.20
+playwright>=1.45
+jdatetime>=5.0
+python-dotenv>=1.0
+reportlab>=4.0
+arabic_reshaper>=3.0
+python-bidi>=0.6
+# تست
+pytest>=8.0
+pytest-asyncio>=0.23
