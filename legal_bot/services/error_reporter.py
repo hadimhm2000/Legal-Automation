@@ -22,6 +22,8 @@ ACTIONS = {
     "TIMEOUT": "توقف و اطلاع به کاربر", "PARSE_CHANGED": "ادامه با موارد بعدی / توقف",
     "LOGIN_UI_CHANGED": "توقف", "BROWSER_CRASH": "بستن مرورگر", "PRINT_FAILED": "ادامه با ابلاغیه‌ی بعدی",
     "SEND_FAILED": "ثبت در گزارش", "PAYMENT": "اطلاع به مدیر", "UNKNOWN": "توقف",
+    "NO_EXECUTION_BRANCH": "توقف؛ پرداخت نوبت استفاده‌نشده ماند", "CASE_NOT_FOUND": "توقف؛ پرداخت محفوظ",
+    "NO_SLOT": "توقف؛ پرداخت محفوظ", "TURN_REJECTED": "توقف؛ پرداخت محفوظ",
 }
 
 _last: dict[tuple, float] = {}
@@ -29,9 +31,16 @@ _recent: list[tuple[float, int, str]] = []
 
 
 def _redact(msg: str) -> str:
+    """توکن، کوکی، پارامتر URL، «Call log» پلی‌رایت، input_value پایدانتیک، کدملی و مقادیر vault حذف می‌شوند."""
     import re
 
-    msg = re.sub(r"bot\d+:[\w-]+", "bot<TOKEN>", msg or "")
+    from .session import vault
+
+    msg = vault.scrub(msg or "")
+    msg = msg.split("Call log")[0]                      # لاگ داخلی Playwright ممکن است مقدار فیلد را داشته باشد
+    msg = re.sub(r"input_value=('[^']*'|\"[^\"]*\"|\S+)", "input_value=<hidden>", msg)
+    msg = re.sub(r"(?<!\d)\d{10}(?!\d)", "<10digits>", msg)   # کدملی
+    msg = re.sub(r"bot\d+:[\w-]+", "bot<TOKEN>", msg)
     msg = re.sub(r"(?i)(cookie|set-cookie|authorization)[^\n]*", r"\1: <hidden>", msg)
     msg = re.sub(r"https?://\S+\?\S+", lambda m: m.group(0).split("?")[0] + "?<params>", msg)
     return msg[:400]

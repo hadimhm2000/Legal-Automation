@@ -48,7 +48,7 @@ class Browser:
             self.browser = await self._pw.chromium.launch(headless=config.HEADLESS)
             self.context = await self.browser.new_context(
                 locale="fa-IR", viewport={"width": 1366, "height": 900}, accept_downloads=True,
-                ignore_https_errors=True)
+                ignore_https_errors=config.IGNORE_HTTPS_ERRORS)
             self.context.set_default_timeout(20_000)
             self.context.on("page", self._attach)
             self.context.on("response", self._on_response)

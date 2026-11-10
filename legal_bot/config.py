@@ -87,6 +87,8 @@ ATTACHMENT_MAX_TRIES = _int("ATTACHMENT_MAX_TRIES", 3)
 DATE_WINDOW_DAYS = _int("DATE_WINDOW_DAYS", 30)
 TURN_MAX_SLOT_TRIES = _int("TURN_MAX_SLOT_TRIES", 8)
 HEADLESS = os.environ.get("HEADLESS", "1") != "0"
+# فقط در صورت ضرورت (گواهی خراب یک زیردامنه) — پیش‌فرض خاموش تا اطلاعات ورود فقط روی TLS معتبر برود
+IGNORE_HTTPS_ERRORS = os.environ.get("IGNORE_HTTPS_ERRORS", "0") == "1"
 
 SUPPORT_PHONE = os.environ.get("SUPPORT_PHONE", "09306186888")
 LAVAYEH_BOT = os.environ.get("LAVAYEH_BOT", "@onlinejudicialservices_bot")

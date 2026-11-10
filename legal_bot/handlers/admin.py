@@ -78,3 +78,17 @@ async def tick(message: Message, db):
 
     n = await daily_tick(message.bot, db)
     await message.answer(f"✅ {n} یادآوری ارسال شد.")
+
+
+@router.message(Command("legal_help"))
+async def help_(message: Message):
+    await message.answer(
+        "🛠 دستورات مدیر\n"
+        "/legal_runs — ۱۵ بررسی آخر (نوع، کاربر، وضعیت، آخرین مرحله، خطا)\n"
+        "/legal_errors — ۱۵ خطای آخر\n"
+        "/legal_user <id> — اشتراک و تعداد ابلاغیه‌های یک کاربر\n"
+        "/legal_allow <id> — افزودن به فهرست بتا (در ربات اصلی هم LEGAL_BETA_IDS لازم است)\n"
+        "/legal_deny <id> — حذف از فهرست بتا\n"
+        "/legal_guide — جایگزینی PDF راهنما (بعد از دستور، فایل را بفرستید)\n"
+        "/legal_tick — ارسال دستی یادآوری‌های امروز\n"
+        "تأیید/رد رسیدها با دکمه‌های زیر هر رسید انجام می‌شود.")

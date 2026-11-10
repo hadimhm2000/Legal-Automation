@@ -63,6 +63,16 @@ class SecretVault:
         for k in list(self._data):
             self.wipe(k)
 
+    def scrub(self, text: str) -> str:
+        """هر مقدار حساسِ در حال استفاده را از متن (پیام خطا، لاگ) حذف می‌کند."""
+        if not isinstance(text, str) or not text:
+            return text
+        for d in list(self._data.values()):
+            for v in list(d.values()):
+                if v and len(v) >= 3:
+                    text = text.replace(v, "<hidden>")
+        return text
+
     def is_empty(self, owner=None) -> bool:
         if owner is None:
             return not any(self._data.values())

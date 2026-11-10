@@ -145,3 +145,35 @@ async def test_turn_invoice_and_admin_approval(env, db):
     assert button(sess, "شروع ثبت نوبت") == f"turn:go:{inv['code']}"
     await press(bot, dp, f"adm:ok:{inv['code']}")       # تأیید دوباره بی‌اثر
     assert (await db.one("SELECT status FROM invoices WHERE code=?", (inv["code"],)))["status"] == "approved"
+
+
+async def test_admin_commands_and_permissions(env, db, monkeypatch):
+    bot, dp, sess = env
+    # مدیر حتی پیش از /start دستورات را دارد
+    for cmd in ("/legal_help", "/legal_runs", "/legal_errors", "/legal_user 777", "/legal_tick"):
+        n = len(sess.calls)
+        await send(bot, dp, cmd)
+        assert len(sess.calls) > n, cmd
+    assert "دستورات مدیر" in sess.texts()[-5]
+    await send(bot, dp, "/legal_allow 555")
+    assert await db.is_beta(555)
+    await send(bot, dp, "/legal_deny 555")
+    assert not await db.is_beta(555)
+
+    # کاربر بتای غیرمدیر: دستورات مدیر و تأیید رسید کار نمی‌کند
+    monkeypatch.setattr(config, "BETA_IDS", {ADMIN, 555})
+    global user
+    saved = user
+    user = User(id=555, is_bot=False, first_name="U")
+    try:
+        await db.upsert_user(555, 555)
+        inv = await db.execute("INSERT INTO invoices(code,bale_id,kind,amount_toman,status,created_at,expires_at) "
+                               "VALUES('INV-T1',555,'new',1,'receipt_sent','x','9999')")
+        await send(bot, dp, "/legal_allow 999")
+        assert not await db.is_beta(999)
+        await press(bot, dp, "adm:ok:INV-T1")
+        assert (await db.one("SELECT status FROM invoices WHERE code='INV-T1'"))["status"] == "receipt_sent"
+        ans = [c for c in sess.calls if type(c).__name__ == "AnswerCallbackQuery"][-1]
+        assert ans.text == "فقط مدیر"
+    finally:
+        user = saved

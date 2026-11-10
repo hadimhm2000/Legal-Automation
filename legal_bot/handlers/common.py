@@ -23,6 +23,8 @@ class BetaGate(BaseMiddleware):
             return
         if isinstance(event, Message) and (event.text or "").startswith("/start"):
             return await handler(event, data)
+        if user.id == config.ADMIN_ID:
+            return await handler(event, data)
         if not await db.is_beta(user.id) or not await db.get_user(user.id):
             if isinstance(event, Message):
                 await event.answer(T.COMING_SOON if not await db.is_beta(user.id) else T.RELOGIN_FROM_MAIN)

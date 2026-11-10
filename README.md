@@ -30,7 +30,7 @@ python bot_main.py
 ## تست
 
 ```sh
-python -m pytest            # ۳۴ تست؛ شامل ورود کامل و روند ابلاغیه روی سایت ساختگی (بدون اینترنت)
+python -m pytest            # ۴۰ تست؛ شامل ورود کامل و روند ابلاغیه روی سایت ساختگی (بدون اینترنت)
 ```
 
 ## ساختار
@@ -49,6 +49,6 @@ docs/open-questions.md
 
 ## دستورات مدیر
 
-`/legal_runs` · `/legal_errors` · `/legal_user <id>` · `/legal_allow <id>` · `/legal_deny <id>` · `/legal_guide` · `/legal_tick`
+`/legal_help` · `/legal_runs` · `/legal_errors` · `/legal_user <id>` · `/legal_allow <id>` · `/legal_deny <id>` · `/legal_guide` · `/legal_tick`
 
 هر خطا در هر مرحله (L01…L12) فوراً با زنجیره‌ی ✅/❌ مراحل به مدیر گزارش می‌شود (بدون هیچ مقدار ورودی کاربر).

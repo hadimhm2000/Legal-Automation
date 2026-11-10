@@ -21,7 +21,7 @@ from legal_bot.db import DB
 from legal_bot.handlers import admin, cases, job_input, notices, payment, plans, start, turn
 from legal_bot.handlers.common import BetaGate
 from legal_bot.services import error_reporter, scheduler
-from legal_bot.services.session import jobs
+from legal_bot.services.session import jobs, vault
 
 
 class RedactFilter(logging.Filter):
@@ -32,7 +32,11 @@ class RedactFilter(logging.Filter):
 
     def filter(self, record):
         try:
-            msg = record.getMessage()
+            msg = vault.scrub(record.getMessage())
+            if record.exc_info and not record.exc_text:
+                record.exc_text = logging.Formatter().formatException(record.exc_info)
+            if record.exc_text:
+                record.exc_text = vault.scrub(record.exc_text).split("Call log")[0]
             for p, r in self._pats:
                 msg = p.sub(r, msg)
             if config.LEGAL_BOT_TOKEN:
