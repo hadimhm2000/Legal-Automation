@@ -19,7 +19,7 @@ from playwright.async_api import Page
 from .. import config
 from ..utils import normalize_fa, to_fa_digits
 from . import selectors as S
-from .browser import click_text, page_text, pdf_of, visible
+from .browser import click_text, human_pause, page_text, pdf_of, visible
 from .session import FlowError
 
 log = logging.getLogger(__name__)
@@ -127,7 +127,7 @@ class Turn:
 
     async def _click_menu(self, idx):
         await self.page.locator(f'[data-mi="{idx}"]').first.click()
-        await self.page.wait_for_timeout(1200)
+        await human_pause(self.page, 1200)
 
     async def _choose(self, items: list[dict], prompt: str, confirm_single: str) -> dict:
         if len(items) == 1:
@@ -139,19 +139,19 @@ class Turn:
         return next(it for it in items if it["idx"] == idx)
 
     async def select_case(self, number: str, by: str):
-        await self.page.wait_for_timeout(2000)
+        await human_pause(self.page, 2000)
         if not await click_text(self.page, *S.TURN_BY_CASE, timeout=15_000):
             raise FlowError("PARSE_CHANGED", "turn: 'by case number' card not found")
-        await self.page.wait_for_timeout(2000)
+        await human_pause(self.page, 2000)
         rows = []
         if await visible(self.page.locator(S.TURN_MY_CASES), timeout=8000):
             await self.page.locator(S.TURN_MY_CASES).first.click()
-            await self.page.wait_for_timeout(1500)
+            await human_pause(self.page, 1500)
             box = self.page.locator(S.TURN_MY_CASES_SEARCH).first
             if by == "case" and await visible(box, timeout=5000):
                 await box.fill(number)
             await click_text(self.page, *S.TURN_MY_CASES_GO, timeout=6000)
-            await self.page.wait_for_timeout(3000)
+            await human_pause(self.page, 3000)
             rows = await self.page.evaluate(ROWS_JS, number)
         if rows:
             ex = [r for r in rows if is_execution_branch(r["text"])]
@@ -163,7 +163,7 @@ class Turn:
             chosen = await self._choose(items, "شعبه‌ی اجرای احکام مورد نظر را انتخاب کنید:",
                                         "شعبه‌ی استخراج‌شده:\n{}\nتأیید می‌کنید؟")
             await self.page.locator(f'[data-tr="{chosen["idx"]}"]').first.click()
-            await self.page.wait_for_timeout(1500)
+            await human_pause(self.page, 1500)
         elif by == "case" and await visible(self.page.locator(S.TURN_CASE_INPUT)):
             el = self.page.locator(S.TURN_CASE_INPUT).first
             await el.click()
@@ -174,7 +174,7 @@ class Turn:
         if not await visible(self.page.locator(S.TURN_CHECK), timeout=8000):
             raise FlowError("PARSE_CHANGED", "turn: check button not found")
         await self.page.locator(S.TURN_CHECK).first.click()
-        await self.page.wait_for_timeout(3000)
+        await human_pause(self.page, 3000)   # فرصت بررسی پرونده توسط سامانه
 
     async def select_daadvarz(self):
         if not await click_text(self.page, *S.TURN_ROLE_PLACEHOLDER, timeout=15_000):
@@ -195,7 +195,7 @@ class Turn:
         await self._click_menu(chosen["idx"])
         await self.page.keyboard.press("Escape")
         await self.page.locator(S.TURN_NEXT).first.click()
-        await self.page.wait_for_timeout(2500)
+        await human_pause(self.page, 2500)
 
     async def select_reason(self):
         if not await visible(self.page.locator(S.TURN_REASON_BTN), timeout=8000):
@@ -206,7 +206,7 @@ class Turn:
             chosen = await self._choose(reasons, "علت مراجعه را انتخاب کنید:", "علت مراجعه:\n{}\nتأیید می‌کنید؟")
             await self._click_menu(chosen["idx"])
         await click_text(self.page, *S.TURN_UNDERSTOOD, timeout=5000)
-        await self.page.wait_for_timeout(1500)
+        await human_pause(self.page, 1500)
 
     async def book(self) -> str:
         await self.job.ask_choice("نوبت در اولین روز و ساعت خالی ثبت شود؟", [("ok", "✅ بله، ثبت کن")])
@@ -217,7 +217,7 @@ class Turn:
         for d in days:
             await self.page.evaluate(DAYS_JS)
             await self.page.locator(f'[data-day="{d["idx"]}"]').first.click()
-            await self.page.wait_for_timeout(1500)
+            await human_pause(self.page, 1500)
             for t in await self.page.evaluate(TIMES_JS):
                 if tries >= config.TURN_MAX_SLOT_TRIES:
                     raise FlowError("NO_SLOT", "slot tries exhausted",
@@ -234,7 +234,7 @@ class Turn:
                     status = (await ri.value).status
                 except Exception:
                     status = None
-                await self.page.wait_for_timeout(2000)
+                await human_pause(self.page, 2000)
                 if status == 200 or "#/Detail" in self.page.url:
                     return f"روز {to_fa_digits(d['day'])} ساعت {to_fa_digits(t['time'])}"
                 await click_text(self.page, *S.TURN_CLOSE, timeout=4000)

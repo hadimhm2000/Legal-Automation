@@ -78,15 +78,37 @@ JOB_TOTAL_TIMEOUT_SEC = _int("JOB_TOTAL_TIMEOUT_SEC", 3600)
 MAX_OTP_RESENDS = _int("MAX_OTP_RESENDS", 3)
 MAX_PASSWORD_ATTEMPTS = _int("MAX_PASSWORD_ATTEMPTS", 3)
 MAX_PORTAL_ENTRY_ATTEMPTS = _int("MAX_PORTAL_ENTRY_ATTEMPTS", 4)
-TYPE_DELAY_MS = _int("TYPE_DELAY_MS", 120)
-STEP_PAUSE_MS = _int("STEP_PAUSE_MS", 1500)
+
+
+def _float(name, default):
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+# ── رفتار انسانی (سرعت پایین، مکث تصادفی، انتظار برای لود کامل) ──
+TYPE_DELAY_MS = _int("TYPE_DELAY_MS", 120)        # پایه‌ی تاخیر تایپ هر نویسه
+STEP_PAUSE_MS = _int("STEP_PAUSE_MS", 1500)       # پایه‌ی مکث بین مراحل
+HUMAN_JITTER = _float("HUMAN_JITTER", 1.0)        # تا ۱۰۰٪ تصادفی اضافه بر پایه (تایپ ۱۲۰–۲۴۰، مکث ۱٫۵–۳ ثانیه)
+SPEED_FACTOR = _float("SPEED_FACTOR", 1.0)        # ضریب کلی سرعت؛ بزرگ‌تر = کندتر (مثلاً ۱٫۵)
+PAGE_SETTLE_MS = _int("PAGE_SETTLE_MS", 1500)     # مکث انسانی بعد از لود کامل هر صفحه
+SEARCH_WAIT_MS = _int("SEARCH_WAIT_MS", 25000)    # حداکثر انتظار برای ظاهر شدن نتیجه/CTA بعد از جستجو
 PRINT_RETRY_WAIT_SEC = _int("PRINT_RETRY_WAIT_SEC", 10)
 PRINT_MAX_TRIES = _int("PRINT_MAX_TRIES", 3)
 ATTACHMENT_WAIT_SEC = _int("ATTACHMENT_WAIT_SEC", 120)
 ATTACHMENT_MAX_TRIES = _int("ATTACHMENT_MAX_TRIES", 3)
 DATE_WINDOW_DAYS = _int("DATE_WINDOW_DAYS", 30)
 TURN_MAX_SLOT_TRIES = _int("TURN_MAX_SLOT_TRIES", 8)
-HEADLESS = os.environ.get("HEADLESS", "1") != "0"
+
+# ── مرورگر ──
+# پیش‌فرض ۰ = مرورگر «قابل مشاهده» باز می‌شود تا رفتار ربات را ببینید.
+# روی سرور بدون نمایشگر، خودکار به headless برمی‌گردد.
+HEADLESS = os.environ.get("HEADLESS", "0") != "0"
+# پنجره‌ی این ربات گوشه‌ی بالا-چپ و کمی بلندتر باز می‌شود تا با پنجره‌ی
+# ربات اصلی (وسط صفحه، ۱۳۶۶×۷۶۸) قاطی نشود.
+BROWSER_WINDOW_POSITION = os.environ.get("BROWSER_WINDOW_POSITION", "0,0")
+BROWSER_WINDOW_SIZE = os.environ.get("BROWSER_WINDOW_SIZE", "1366x900")
 # فقط در صورت ضرورت (گواهی خراب یک زیردامنه) — پیش‌فرض خاموش تا اطلاعات ورود فقط روی TLS معتبر برود
 IGNORE_HTTPS_ERRORS = os.environ.get("IGNORE_HTTPS_ERRORS", "0") == "1"
 

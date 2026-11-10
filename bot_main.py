@@ -12,7 +12,6 @@ import sys
 from logging.handlers import RotatingFileHandler
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.telegram import TelegramAPIServer
 from aiogram.fsm.storage.memory import MemoryStorage
 
@@ -21,6 +20,7 @@ from legal_bot.db import DB
 from legal_bot.handlers import admin, cases, job_input, notices, payment, plans, start, turn
 from legal_bot.handlers.common import BetaGate
 from legal_bot.services import error_reporter, scheduler
+from legal_bot.services.bale_session import BaleDirectUploadSession
 from legal_bot.services.session import jobs, vault
 
 
@@ -96,13 +96,17 @@ async def main():
     db = await DB().connect()
     # ری‌استارت: هر بررسی نیمه‌تمام لغو می‌شود (اطلاعات ورودی در RAM بوده و از بین رفته است)
     await db.execute("UPDATE check_runs SET status='cancelled', error_code='RESTART' WHERE status='running'")
-    session = AiohttpSession(api=TelegramAPIServer.from_base(config.BALE_API_BASE))
+    # BaleDirectUploadSession: فایل‌ها مستقیم (نه attach://) آپلود می‌شوند؛
+    # بدون این، بله در sendDocument/sendPhoto خطای
+    # «Bad Request: failed to get HTTP URL content» می‌دهد (خطای L11).
+    session = BaleDirectUploadSession(api=TelegramAPIServer.from_base(config.BALE_API_BASE))
     bot = Bot(config.LEGAL_BOT_TOKEN, session=session)
     dp = build_dispatcher(db)
     dp["bot"] = bot
     stop = asyncio.Event()
     sched = asyncio.create_task(scheduler.run(bot, db, stop))
-    logging.info("legal bot started (API: %s)", config.BALE_API_BASE)
+    logging.info("legal bot started (API: %s, browser: %s)", config.BALE_API_BASE,
+                 "headless" if config.HEADLESS else "visible")
     try:
         await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
     finally:

@@ -117,8 +117,24 @@ class Job:
             return None
 
     async def send_pdf(self, data: bytes, filename: str, caption: str = ""):
-        return await self.bot.send_document(self.chat_id, BufferedInputFile(data, filename=filename),
-                                            caption=caption[:1000] or None)
+        """ارسال PDF با تا ۳ تلاش (خطای گذرای شبکه/بله).
+
+        هر تلاش یک BufferedInputFile تازه می‌سازد چون فایل aiogram فقط یک‌بار
+        خوانده می‌شود (read یک async generator یک‌بارمصرف است).
+        """
+        last: Exception | None = None
+        for attempt in range(3):
+            try:
+                return await self.bot.send_document(
+                    self.chat_id, BufferedInputFile(data, filename=filename),
+                    caption=caption[:1000] or None)
+            except Exception as e:  # pragma: no cover - شبکه
+                last = e
+                log.warning("send_pdf try %d failed: %s: %s", attempt + 1,
+                            type(e).__name__, str(e)[:120])
+                if attempt < 2:
+                    await asyncio.sleep(2 * (attempt + 1))
+        raise last
 
     # ── پرسش ──
     async def ask(self, prompt: str, options: list[tuple[str, str]] | None = None, *, accept_text=True,

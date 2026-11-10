@@ -27,7 +27,7 @@ from playwright.async_api import Page
 from .. import config, texts as T
 from ..utils import clean_digits, mask_national_code, normalize_fa, valid_national_code
 from . import selectors as S
-from .browser import click_text, page_text, text_re, visible, wait_first
+from .browser import click_text, human_ms, human_pause, page_text, text_re, visible, wait_first, wait_ready
 from .session import FlowError, vault
 
 log = logging.getLogger(__name__)
@@ -93,6 +93,7 @@ class SanaLogin:
             new = None
             try:
                 await home.goto(config.ADLIRAN_BASE_URL, wait_until="domcontentloaded", timeout=45_000)
+                await wait_ready(home)   # صبر برای لود کامل صفحه‌ی اصلی + مکث انسانی
                 await click_text(home, *S.HOME_POPUP_CLOSE, timeout=4_000)
                 await click_text(home, *self.cfg["card"], timeout=10_000)
                 try:
@@ -110,6 +111,7 @@ class SanaLogin:
                         await new.goto(self.cfg["direct"], wait_until="domcontentloaded", timeout=45_000)
                 with contextlib.suppress(Exception):
                     await new.wait_for_load_state("domcontentloaded", timeout=30_000)
+                await wait_ready(new, timeout_ms=30_000, settle=False)  # لود کامل تب تازه
                 state = await wait_first({
                     "login": lambda: visible(new.locator(S.NATIONAL_CODE)),
                     "in": lambda: asyncio.sleep(0, self.is_target(new) and "iehraz" not in new.url),
@@ -143,18 +145,27 @@ class SanaLogin:
                 await page.close()
         raise _Restart()
 
-    # ── نوشتن آرام و یکی‌یکی ─────────────────────────────────────────
+    # ── نوشتن آرام و یکی‌یکی (مثل یک کاربر واقعی) ─────────────────────
     async def _type(self, page: Page, selector: str, secret_name: str):
         value = vault.get(self.job.owner, secret_name)
         if value is None:
             raise FlowError("UNKNOWN", f"vault empty for {secret_name}")
         el = page.locator(selector).first
         await el.wait_for(state="visible", timeout=20_000)
+        # تاخیر هر نویسه تصادفی است (انسان با سرعت ثابت تایپ نمی‌کند)
         await el.click()
         await el.fill("")
-        await el.press_sequentially(value, delay=config.TYPE_DELAY_MS)
+        await el.press_sequentially(value, delay=human_ms(config.TYPE_DELAY_MS))
         value = None
-        await page.wait_for_timeout(config.STEP_PAUSE_MS)
+        await human_pause(page)
+
+    async def _type_public(self, page: Page, selector: str, text: str):
+        """تایپ آرام برای مقادیر غیر حساس (مثل کد کپچا)."""
+        el = page.locator(selector).first
+        await el.click()
+        await el.fill("")
+        await el.press_sequentially(text, delay=human_ms(config.TYPE_DELAY_MS))
+        await human_pause(page)
 
     async def _submit(self, page, field, api) -> tuple[int | None, str]:
         """Enter روی فیلد و انتظار برای پاسخ API ورود؛ (status, متن پاسخ)."""
@@ -293,11 +304,7 @@ class SanaLogin:
             raise FlowError("LOGIN_UI_CHANGED", "captcha image not found", T.SITE_DOWN)
         code = await self.job.ask_text(T.ASK_CAPTCHA, lambda v: (clean_digits(v) or None, "فقط عدد داخل تصویر را بفرستید."),
                                        photo=data)
-        el = page.locator(S.CAPTCHA_INPUT).first
-        await el.click()
-        await el.fill("")
-        await el.press_sequentially(code, delay=config.TYPE_DELAY_MS)
-        await page.wait_for_timeout(config.STEP_PAUSE_MS)
+        await self._type_public(page, S.CAPTCHA_INPUT, code)
 
     # ── وسط کار: اگر سامانه دوباره به صفحه‌ی ورود برد ─────────────────
     async def ensure(self, page: Page) -> Page:

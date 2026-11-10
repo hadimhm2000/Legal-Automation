@@ -13,10 +13,10 @@ import re
 
 from playwright.async_api import Page
 
-from .. import texts as T
+from .. import config, texts as T
 from ..utils import normalize_fa, to_fa_digits
 from . import selectors as S
-from .browser import click_text, page_text, pdf_of, visible
+from .browser import click_text, human_pause, page_text, pdf_of, text_re, visible, wait_first
 from .case_parser import diff_new_lines, extract_lavayeh, last_change, line_hash, next_hearing, numbered_lines, \
     parse_case_card
 from .reports import resultcase_list_pdf
@@ -60,7 +60,7 @@ class ResultCase:
         with contextlib.suppress(Exception):
             await self.page.goto(self.home_url, wait_until="domcontentloaded", timeout=45_000)
         await self.ensure()
-        await self.page.wait_for_timeout(2000)
+        await human_pause(self.page, 2000)
 
     async def _set_box(self, sel, labels, want: bool):
         el = self.page.locator(sel).first
@@ -74,6 +74,13 @@ class ResultCase:
             return
         await click_text(self.page, *labels, timeout=4000)
 
+    async def _has_result_or_empty(self) -> bool:
+        """نتیجه‌ی جستجو ظاهر شده؟ (کارت پرونده یا پیام «یافت نشد»)"""
+        if await self.cards():
+            return True
+        return await visible(self.page.get_by_text(text_re("موردی یافت نشد", "پرونده‌ای یافت نشد",
+                                                             "موردی برای نمایش", "یافت نشد")))
+
     async def search(self, live: bool, archived: bool, case_no: str | None = None):
         await self.ensure()
         if case_no is not None:
@@ -85,7 +92,10 @@ class ResultCase:
         await self._set_box(S.RC_ARCHIVED, S.RC_ARCHIVED_LABEL, archived)
         if not await click_text(self.page, *S.RC_SEARCH, timeout=10_000):
             raise FlowError("PARSE_CHANGED", "resultcase search button not found")
-        await self.page.wait_for_timeout(3500)
+        # صبر برای لود کامل نتیجه‌ی جستجو (کارت‌ها یا پیام «یافت نشد») — نه یک زمان ثابت کوتاه؛
+        # اگر سامانه کند باشد تا SEARCH_WAIT_MS فرصت دارد، اگر سریع بود همان لحظه ادامه می‌دهیم.
+        await wait_first({"result": self._has_result_or_empty}, timeout_ms=config.SEARCH_WAIT_MS)
+        await human_pause(self.page)
 
     async def cards(self):
         return await self.page.evaluate(CASE_CARDS_JS, S.RC_VIEW)
@@ -96,7 +106,7 @@ class ResultCase:
             loc = self.page.locator("ul li span, ul li a").get_by_text(re.compile(rf"^\s*{n}\s*$"))
         if await visible(loc):
             await loc.first.click()
-            await self.page.wait_for_timeout(2500)
+            await human_pause(self.page, 2500)   # فرصت لود صفحه‌ی بعد
             return True
         return False
 
@@ -157,7 +167,7 @@ class ResultCase:
         for title in S.RC_TABS:
             with contextlib.suppress(Exception):
                 await click_text(popup, title, timeout=3000)
-                await popup.wait_for_timeout(2000)
+                await human_pause(popup, 2000)   # فرصت لود تب
             data = await self._print(popup)
             if data:
                 pdfs.append((title, data))

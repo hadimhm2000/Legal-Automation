@@ -68,9 +68,16 @@ async def run_with_browser(ctx: RunCtx, target: str, work, *, consent=True):
         await job.say(e.user_message or T.SITE_DOWN)
     except Exception as e:  # کرش مرورگر یا خطای پیش‌بینی‌نشده
         log.exception("job crashed")
-        cat = "BROWSER_CRASH" if "playwright" in type(e).__module__ else "UNKNOWN"
-        await ctx.report(cat, f"{type(e).__name__}: {str(e)[:200]}")
-        await job.say(T.SITE_DOWN)
+        mod = type(e).__module__ or ""
+        name = type(e).__name__
+        if "aiogram" in mod or name.startswith("Telegram") or "telegram" in str(e).lower():
+            cat = "SEND_FAILED"  # خطای ارسال به بله — سایت مقصر نیست
+        elif "playwright" in mod:
+            cat = "BROWSER_CRASH"
+        else:
+            cat = "UNKNOWN"
+        await ctx.report(cat, f"{name}: {str(e)[:200]}")
+        await job.say(T.SEND_FAILED_USER if cat == "SEND_FAILED" else T.SITE_DOWN)
     finally:
         vault.wipe(job.owner)
         if login is not None and login.used_credentials:

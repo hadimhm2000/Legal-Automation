@@ -23,7 +23,7 @@ from playwright.async_api import Page
 from .. import config, keyboards as K
 from ..utils import fa_date, normalize_fa, to_fa_digits, to_jalali_str, today_tehran
 from . import selectors as S
-from .browser import click_text, page_text, pdf_of, visible
+from .browser import click_text, human_pause, page_text, pdf_of, text_re, visible, wait_first
 from .notice_parser import TABLE_JS, parse_notice_text
 from .session import FlowError
 
@@ -100,7 +100,18 @@ class Eblagh:
         with contextlib.suppress(Exception):
             await self.page.goto(self.home_url, wait_until="domcontentloaded", timeout=45_000)
         await self.ensure()
-        await self.page.wait_for_timeout(2500)
+        await human_pause(self.page, 2500)
+
+    async def _wait_list_ready(self):
+        """صبر تا فهرست ابلاغیه‌ها واقعاً لود شود (کارت‌ها یا پیام خالی بودن) — نه زمان ثابت."""
+        async def ready() -> bool:
+            if await self.cards():
+                return True
+            # فقط پیام‌های روشنِ «خالی بودن»؛ واژه‌ی کلی «ابلاغیه» در سرصفحه هست و علامت لود نیست
+            txt = await page_text(self.page)
+            return any(w in txt for w in ("یافت نشد", "موردی به نمایش", "رکوردی", "موجود نیست"))
+        await wait_first({"list": ready}, timeout_ms=config.SEARCH_WAIT_MS)
+        await human_pause(self.page)
 
     async def open_new_list(self):
         await self.ensure()
@@ -108,14 +119,14 @@ class Eblagh:
             await self.page.locator(S.NEW_NOTICES_ID).first.click()
         else:
             await click_text(self.page, *S.NEW_NOTICES, timeout=10_000)
-        await self.page.wait_for_timeout(2500)
+        await self._wait_list_ready()
 
     async def open_viewed_list(self):
         await self.ensure()
         await click_text(self.page, *S.BACK_BTN, timeout=3_000)
         if not await click_text(self.page, *S.VIEWED_NOTICES, timeout=10_000):
             raise FlowError("PARSE_CHANGED", "viewed-notices button not found")
-        await self.page.wait_for_timeout(2500)
+        await self._wait_list_ready()
 
     async def cards(self) -> list[dict]:
         return await self.page.evaluate(CARDS_JS, S.VIEW_BTN)
@@ -124,7 +135,7 @@ class Eblagh:
         nxt = self.page.locator(".pagination li:not(.disabled):not(.active) >> text=/^(›|»|بعدی|>)$/")
         if await visible(nxt):
             await nxt.first.click()
-            await self.page.wait_for_timeout(2000)
+            await human_pause(self.page, 2000)   # فرصت لود صفحه‌ی بعد
             return True
         return False
 
@@ -181,7 +192,7 @@ class Eblagh:
     async def _read_print(self, popup: Page):
         with contextlib.suppress(Exception):
             await popup.wait_for_load_state("load", timeout=40_000)
-        await popup.wait_for_timeout(1500)
+        await human_pause(popup, 1500)
         text = await page_text(popup)
         table = None
         with contextlib.suppress(Exception):
@@ -196,7 +207,7 @@ class Eblagh:
         if not await visible(self.page.locator(S.ATTACH_TAB)):
             return out
         await self.page.locator(S.ATTACH_TAB).first.click()
-        await self.page.wait_for_timeout(1500)
+        await human_pause(self.page, 1500)
         n = await self.page.evaluate(ATTACH_JS)
         for i in range(n):
             warned = False
@@ -246,7 +257,7 @@ class Eblagh:
                     await self.reload_home()
                     continue
                 return None
-            await self.page.wait_for_timeout(2000)
+            await human_pause(self.page, 2000)
             popup = await self._open_print()
             if popup is None:
                 await self.job.say("🔄 صفحه‌ی چاپ پس از ۳ تلاش باز نشد؛ سایت را ریلود می‌کنم…")
@@ -257,7 +268,7 @@ class Eblagh:
             info["notice_number"] = info.get("notice_number") or ext_id
             atts = await self._attachments(ext_id)
             await click_text(self.page, *S.BACK_BTN, timeout=5_000)
-            await self.page.wait_for_timeout(1500)
+            await human_pause(self.page, 1500)
             info["_pdf"], info["_attachments"], info["_is_new"] = pdf, atts, is_new
             return info
         return None
@@ -373,7 +384,7 @@ async def work_by_case(ctx, br, login, page, case_number: str):
     await e.ensure()
     if not await click_text(e.page, *S.SEARCH_NOTICE, timeout=10_000):
         raise FlowError("PARSE_CHANGED", "search-notice button not found")
-    await e.page.wait_for_timeout(1200)
+    await human_pause(e.page, 1200)
     inp = e.page.locator("input[type=text]:visible, input:not([type]):visible").filter(
         has_not=e.page.locator(f"{S.RANGE_FROM}, {S.RANGE_TO}"))
     target = None
@@ -390,7 +401,7 @@ async def work_by_case(ctx, br, login, page, case_number: str):
     await target.click()
     await target.fill(case_number)
     await click_text(e.page, *S.SEARCH_NOTICE_GO, timeout=8_000)
-    await e.page.wait_for_timeout(3000)
+    await e._wait_list_ready()
     ids = [c["id"] for c in await e.all_cards()]
     if not ids:
         await ctx.job.say(f"برای پرونده {to_fa_digits(case_number)} ابلاغیه‌ای صادر نشده است (یا یافت نشد).")
@@ -415,7 +426,7 @@ async def _set_range(e: Eblagh, start: dt.date, end: dt.date):
         await e.page.keyboard.press("Escape")
     if not await click_text(e.page, *S.RANGE_GO, timeout=8_000):
         raise FlowError("PARSE_CHANGED", "range search button not found")
-    await e.page.wait_for_timeout(3500)
+    await e._wait_list_ready()
 
 
 async def work_by_range(ctx, br, login, page, start: dt.date, end: dt.date):
@@ -446,7 +457,7 @@ async def work_by_range(ctx, br, login, page, start: dt.date, end: dt.date):
                     await e.open_viewed_list()
                     await _set_range(e, w_start, w_end)
                     continue
-                await e.page.wait_for_timeout(2000)
+                await human_pause(e.page, 2000)
                 popup = await e._open_print()
                 if popup is None:
                     await e.reload_home()
@@ -459,7 +470,7 @@ async def work_by_range(ctx, br, login, page, start: dt.date, end: dt.date):
                 info["_attachments"] = await e._attachments(ext)
                 info["_pdf"], info["_is_new"] = pdf, False
                 await click_text(e.page, *S.BACK_BTN, timeout=5_000)
-                await e.page.wait_for_timeout(1500)
+                await human_pause(e.page, 1500)
                 break
             if info:
                 await deliver_notice(ctx, info)

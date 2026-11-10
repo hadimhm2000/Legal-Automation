@@ -1,14 +1,19 @@
-"""راه‌اندازی Playwright (headless، context تازه، بدون پروفایل/کوکی ذخیره‌شده/trace/video/اسکرین‌شات)
-و کمک‌تابع‌های مشترک کلیک/انتظار.
+"""راه‌اندازی Playwright و کمک‌تابع‌های مشترک کلیک/انتظار.
+
+حالت پیش‌فرض: مرورگر «قابل‌مشاهده» (HEADLESS=0) تا رفتار ربات را ببینید؛ پنجره در
+گوشه‌ی بالا-چپ با اندازه‌ی BROWSER_WINDOW_SIZE باز می‌شود تا با پنجره‌ی ربات اصلی
+قاطی نشود. اگر نمایشگر نباشد (سرور)، خودکار به headless برمی‌گردد.
 
 قاعده: `networkidle` ممنوع است (روی این سایت ۳۰ ثانیه timeout می‌دهد)؛ به‌جایش انتظار برای
-selector/آدرس یا «اولین مورد از چند حالت».
+selector/آدرس یا «اولین مورد از چند حالت» + مکث‌های انسانی (ببینید: رفتار انسانی).
 """
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import logging
+import random
 import re
 
 from playwright.async_api import Page, async_playwright
@@ -45,14 +50,32 @@ class Browser:
         self._held = True
         try:
             self._pw = await async_playwright().start()
-            self.browser = await self._pw.chromium.launch(headless=config.HEADLESS)
+            args = ["--disable-blink-features=AutomationControlled"]  # مثل ربات اصلی؛ نشانه‌های اتوماسیون کمتر
+            if not config.HEADLESS:
+                # پنجره‌ی قابل‌مشاهده در گوشه‌ی بالا-چپ (متمایز از ربات اصلی)
+                if config.BROWSER_WINDOW_POSITION:
+                    args.append(f"--window-position={config.BROWSER_WINDOW_POSITION}")
+                if config.BROWSER_WINDOW_SIZE:
+                    args.append(f"--window-size={config.BROWSER_WINDOW_SIZE}")
+            try:
+                self.browser = await self._pw.chromium.launch(headless=config.HEADLESS, args=args)
+            except Exception:
+                if config.HEADLESS:
+                    raise
+                # سرور بدون نمایشگر (X/Display نداریم) → برگشت خودکار به headless
+                log.warning("launching a visible browser failed (no display?); falling back to headless")
+                self.browser = await self._pw.chromium.launch(headless=True, args=args)
             self.context = await self.browser.new_context(
-                locale="fa-IR", viewport={"width": 1366, "height": 900}, accept_downloads=True,
+                locale="fa-IR", viewport=None if not config.HEADLESS else {"width": 1366, "height": 900},
+                no_viewport=not config.HEADLESS,  # در حالت قابل‌مشاهده صفحه کل پنجره را می‌گیرد
+                accept_downloads=True,
                 ignore_https_errors=config.IGNORE_HTTPS_ERRORS)
             self.context.set_default_timeout(20_000)
             self.context.on("page", self._attach)
             self.context.on("response", self._on_response)
             self.page = await self.context.new_page()
+            if not config.HEADLESS:
+                log.info("👀 مرورگر قابل‌مشاهده باز شد (ربات حقوقی — پنجره‌ی بالا-چپ)")
             return self
         except Exception:
             await self.close()
@@ -128,6 +151,33 @@ class Browser:
         return d
 
 
+# ── رفتار انسانی: سرعت پایین + مکث تصادفی + انتظار برای لود کامل ────────
+def human_ms(base_ms: float) -> float:
+    """پایه × (۱ + جیتر تصادفی) × ضریب سرعت — هر بار کمی متفاوت، مثل انسان.
+
+    نمونه (پیش‌فرض‌ها): تایپ هر نویسه ۱۲۰–۲۴۰ms، مکث بین مراحل ۱٫۵–۳ ثانیه.
+    SPEED_FACTOR را بزرگ‌تر بگذارید تا کل ربات کندتر شود.
+    """
+    jitter = 1.0 + random.uniform(0, max(0.0, config.HUMAN_JITTER))
+    return base_ms * jitter * max(0.0, config.SPEED_FACTOR)
+
+
+async def human_pause(page: Page, base_ms: float | None = None):
+    """مکث انسانی (با جیتر) روی صفحه."""
+    await page.wait_for_timeout(human_ms(base_ms if base_ms is not None else config.STEP_PAUSE_MS))
+
+
+async def wait_ready(page: Page, timeout_ms: int = 30_000, settle: bool = True):
+    """انتظار برای لود کامل صفحه (`networkidle` ممنوع است) + مکث انسانی.
+
+    برای اینکه مطمئن باشیم سامانه کامل لود شده و دکمه‌ها (CTA) آماده‌ی کلیک‌اند.
+    """
+    with contextlib.suppress(Exception):
+        await page.wait_for_load_state("load", timeout=timeout_ms)
+    if settle:
+        await human_pause(page, config.PAGE_SETTLE_MS)
+
+
 # ── کمک‌تابع‌ها ──────────────────────────────────────────────────────────
 def text_re(*words: str) -> re.Pattern:
     """الگوی متنی که «ي/ی» و «ك/ک» و نیم‌فاصله را یکسان می‌گیرد."""
@@ -193,7 +243,27 @@ async def page_text(page: Page) -> str:
 
 
 async def pdf_of(page: Page) -> bytes:
+    """PDF صفحه — در حالت قابل‌مشاهده page.pdf() کار نمی‌کند، پس از CDP استفاده می‌شود.
+
+    Page.printToPDF از طریق CDP هم در headless و هم در حالت پنجره‌دار جواب می‌دهد.
+    اگر CDP در دسترس نبود (مرورگر غیر کرومیوم)، به page.pdf برمی‌گردیم.
+    """
     with contextlib.suppress(Exception):
         await page.emulate_media(media="print")
+    try:
+        cdp = await page.context.new_cdp_session(page)
+        try:
+            result = await cdp.send("Page.printToPDF", {
+                "paperWidth": 8.27, "paperHeight": 11.69,       # A4 (اینچ)
+                "printBackground": True,
+                "marginTop": 0.31, "marginBottom": 0.31,       # ~۸ میلی‌متر
+                "marginLeft": 0.24, "marginRight": 0.24,       # ~۶ میلی‌متر
+            })
+            return base64.b64decode(result["data"])
+        finally:
+            with contextlib.suppress(Exception):
+                await cdp.detach()
+    except Exception:
+        pass
     return await page.pdf(format="A4", print_background=True,
                           margin={"top": "8mm", "bottom": "8mm", "left": "6mm", "right": "6mm"})
