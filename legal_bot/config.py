@@ -101,6 +101,17 @@ ATTACHMENT_MAX_TRIES = _int("ATTACHMENT_MAX_TRIES", 3)
 DATE_WINDOW_DAYS = _int("DATE_WINDOW_DAYS", 30)
 TURN_MAX_SLOT_TRIES = _int("TURN_MAX_SLOT_TRIES", 8)
 
+# ── اطلاع‌رسانی پرونده (resultcase) — طبق دستور آبان ۱۴۰۵ و ضبط‌های A/B/C/D/GGG ──
+RC_PAGE_SIZE = _int("RC_PAGE_SIZE", 100)            # تعداد نمایش در هر صفحه همیشه ۱۰۰
+RC_MAX_PAGES = _int("RC_MAX_PAGES", 50)             # سقف ورق‌زدن صفحه‌های نتیجه
+RC_QUEUE_WAIT_SEC = _int("RC_QUEUE_WAIT_SEC", 60)   # «صف پردازش» → ۱ دقیقه صبر و استعلام مجدد
+RC_QUEUE_MAX_TRIES = _int("RC_QUEUE_MAX_TRIES", 30) # تا وقتی جواب یا «پرونده ای یافت نشد» بیاید
+RC_SVC_RETRY_SEC = _int("RC_SVC_RETRY_SEC", 10)     # «تاخیر در اجرای سرویس» → همان کار دوباره
+RC_SVC_MAX_TRIES = _int("RC_SVC_MAX_TRIES", 3)      # بعد از آن: ریلود و تکرار کل جستجو
+RC_SVC_MAX_RESTARTS = _int("RC_SVC_MAX_RESTARTS", 2)
+RC_TAB_INFO_WAIT_SEC = _int("RC_TAB_INFO_WAIT_SEC", 30)  # صبر برای درج اطلاعات پایین تب جزئیات
+RC_TAB_MAX_TRIES = _int("RC_TAB_MAX_TRIES", 5)      # ۳۰ ثانیه اطلاعات نیامد → دوباره همان تب
+
 # ── مرورگر ──
 # پیش‌فرض ۰ = مرورگر «قابل مشاهده» باز می‌شود تا رفتار ربات را ببینید.
 # روی سرور بدون نمایشگر، خودکار به headless برمی‌گردد.

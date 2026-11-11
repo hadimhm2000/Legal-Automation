@@ -24,6 +24,7 @@ ACTIONS = {
     "SEND_FAILED": "ثبت در گزارش", "PAYMENT": "اطلاع به مدیر", "UNKNOWN": "توقف",
     "NO_EXECUTION_BRANCH": "توقف؛ پرداخت نوبت استفاده‌نشده ماند", "CASE_NOT_FOUND": "توقف؛ پرداخت محفوظ",
     "NO_SLOT": "توقف؛ پرداخت محفوظ", "TURN_REJECTED": "توقف؛ پرداخت محفوظ",
+    "SITE_BUSY": "توقف و اطلاع به کاربر", "SVC_DELAY": "توقف و اطلاع به کاربر",
 }
 
 _last: dict[tuple, float] = {}

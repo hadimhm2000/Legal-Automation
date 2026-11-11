@@ -57,12 +57,24 @@ RC_ARCHIVED = "#archivedCase"                                 # ✅ «مختوم
 RC_LIVE_LABEL = ["مختومه نشده"]
 RC_ARCHIVED_LABEL = ["مختومه شده"]
 RC_CASE_NO = "#txtHstCaseNo"                                  # ✅
-RC_SEARCH = ["بازیابی اطلاعات"]                               # ✅
+RC_SEARCH = ["بازیابی اطلاعات"]                               # ✅ (استعلام)
 RC_VIEW = ["مشاهده"]                                          # ✅ → تب CaseListWithPasswordByCaseNo
 RC_CASE_INFO = '[ng-bind-html="viewModel.caseInfo"]'          # ✅ از HTML ارسالی کارفرما
 RC_PRINT = ["نسخه چاپی"]                                      # ✅ → Reports/PrintResultCase
-RC_TABS = ["روند کار پرونده", "آخرین موضوعات پرونده"]         # ✅ (از resultCaseTitle در ضبط)
-RC_PAGE_SIZE = "select"                                       # ⏳ انتخاب تعداد در صفحه (3..100)
+RC_TAB_FLOW = ["روند کاری پرونده", "روند کار پرونده"]          # ✅ pills-profile-tab (printType=2)
+RC_TAB_SUBJECT = ["آخرین موضوعات"]                            # ✅ pills-disabled-tab (printType=4)
+# ✅ فیلدهای تاریخ جستجو (از HTML ارسالی کارفرما — persian-datepicker-popup)
+RC_DATE_FROM = 'input[name="saveFromDate"]'
+RC_DATE_TO = 'input[name="saveToDate"]'
+# ✅ پیام‌های سامانه (GGG) — هر سه روی viewModel نمایش داده می‌شوند
+RC_MSG_WARNING = '[ng-bind-html="viewModel.warningMessage"]'  # «صف پردازش…»
+RC_MSG_INFO = '[ng-bind-html="viewModel.infoMessage"]'        # «پرونده ای یافت نشد»
+RC_MSG_ERROR = '[ng-bind-html="viewModel.errorMessage"]'      # «تاخیر در اجرای سرویس…»
+RC_QUEUE_TEXTS = ["صف پردازش"]                                # ✅ هر دو متن هشدار GGG
+RC_NOT_FOUND_TEXTS = ["پرونده ای یافت نشد", "موردی یافت نشد"]  # ✅ پیام اطلاع GGG
+RC_SVC_DELAY_TEXTS = ["تاخیر در اجرای سرویس"]                  # ✅ پیام خطای قرمز
+RC_PAGE_SIZE_VALUE = "100"                                    # ✅ همیشه ۱۰۰ (دستور کارفرما)
+RC_GET_LIST_API = "GetCaseList"                               # ✅ POST فهرست (409 = صف پردازش)
 
 # ── نوبت‌دهی (adliran.ir/Turn) ──
 TURN_BY_CASE = ["اخذ نوبت بر اساس شماره پرونده"]              # ✅

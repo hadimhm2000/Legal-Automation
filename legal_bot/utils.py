@@ -137,6 +137,51 @@ def date_windows(start: dt.date, end: dt.date, days: int = 30) -> list[tuple[dt.
     return out
 
 
+def year_windows(start: dt.date, end: dt.date) -> list[tuple[dt.date, dt.date]]:
+    """شکستن بازه به پنجره‌های «یک‌ساله» با مرز سال شمسی (فروردین تا اسفند).
+
+    برای استعلامِ بازه‌ی بیشتر در اطلاع‌رسانی پرونده: سامانه بازه‌ی بیش از یک سال را
+    یک‌جا نمی‌پذیرد، پس سال‌به‌سال جدا و جدا استعلام می‌شود.
+    """
+    if end < start:
+        start, end = end, start
+    out = []
+    cur = start
+    one_day = dt.timedelta(days=1)
+    while cur <= end:
+        j = jdatetime.date.fromgregorian(date=cur)
+        year_end = jdatetime.date(j.year + 1, 1, 1).togregorian() - one_day   # آخرین روز اسفند
+        stop = min(year_end, end)
+        out.append((cur, stop))
+        cur = stop + one_day
+    return out
+
+
+def subtract_ranges(start: dt.date, end: dt.date,
+                    exclude: list[tuple[dt.date, dt.date]]) -> list[tuple[dt.date, dt.date]]:
+    """بازه‌ی [start, end] منهای بازه‌های `exclude` → بازه‌های باقی‌مانده (مرتب و بدون هم‌پوشانی).
+
+    برای اینکه بازه‌ای که ابتدای کار استعلام شده، دوباره استعلام نشود.
+    """
+    if end < start:
+        start, end = end, start
+    one_day = dt.timedelta(days=1)
+
+    def _clip(pair):
+        s, e = pair
+        return max(s, start), min(e, end)
+
+    parts = sorted(_clip(p) for p in exclude if p[0] and p[1] and _clip(p)[0] <= _clip(p)[1])
+    out, cur = [], start
+    for s, e in parts:
+        if s > cur:
+            out.append((cur, min(s - one_day, end)))
+        cur = max(cur, e + one_day)
+    if cur <= end:
+        out.append((cur, end))
+    return [(s, e) for s, e in out if s <= e]
+
+
 def hhmm_to_time(s: str) -> dt.time | None:
     m = re.search(r"(\d{1,2})\s*:\s*(\d{2})", to_en_digits(s or ""))
     if not m:

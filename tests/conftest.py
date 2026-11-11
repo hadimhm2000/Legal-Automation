@@ -8,6 +8,11 @@ os.environ.setdefault("HANDOFF_SECRET", "test-secret")
 os.environ.setdefault("HEADLESS", "1")
 os.environ.setdefault("SPEED_FACTOR", "0.02")
 os.environ.setdefault("PAGE_SETTLE_MS", "30")
+# اطلاع‌رسانی پرونده: تلاش‌های مجدد بدون انتظار (صف پردازش / تاخیر سرویس / تب جزئیات)
+os.environ.setdefault("RC_QUEUE_WAIT_SEC", "0")
+os.environ.setdefault("RC_SVC_RETRY_SEC", "0")
+os.environ.setdefault("RC_TAB_INFO_WAIT_SEC", "2")
+os.environ.setdefault("RC_SVC_MAX_TRIES", "2")
 
 import pytest_asyncio  # noqa: E402
 

@@ -1,7 +1,8 @@
 import datetime as dt
 
-from legal_bot.utils import (date_windows, looks_like_secret, mask_national_code, parse_jalali, to_jalali_str,
-                             valid_national_code, validate_archive_number, validate_case_number)
+from legal_bot.utils import (date_windows, looks_like_secret, mask_national_code, parse_jalali,
+                             subtract_ranges, to_jalali_str, valid_national_code, validate_archive_number,
+                             validate_case_number, year_windows)
 
 
 def test_national_code():
@@ -41,6 +42,37 @@ def test_date_windows_30_days():
     for (a1, b1), (a2, b2) in zip(w, w[1:]):
         assert a2 == b1 + dt.timedelta(days=1)
     assert date_windows(e, s, 30) == w  # ترتیب برعکس
+
+
+def test_year_windows_jalali_boundaries():
+    """بازه‌ی بیش از یک سال → پنجره‌های یک‌ساله با مرز سال شمسی (۱۴۰۳ کبیسه است)."""
+    w = year_windows(parse_jalali("1403/09/01"), parse_jalali("1405/02/10"))
+    assert [to_jalali_str(a) for a, _ in w] == ["1403/09/01", "1404/01/01", "1405/01/01"]
+    assert [to_jalali_str(b) for _, b in w] == ["1403/12/30", "1404/12/29", "1405/02/10"]
+    # بازه‌ی داخل یک سال → همان یک پنجره
+    assert year_windows(parse_jalali("1404/02/01"), parse_jalali("1404/11/20")) == [
+        (parse_jalali("1404/02/01"), parse_jalali("1404/11/20"))]
+    # ترتیب برعکس هم درست می‌شود
+    w2 = year_windows(parse_jalali("1405/02/10"), parse_jalali("1403/09/01"))
+    assert w2 == w
+
+
+def test_subtract_ranges():
+    initial = (parse_jalali("1405/01/01"), parse_jalali("1405/08/16"))
+    # کاملاً داخل بازه‌ی استعلام‌شده → خالی (باید به کاربر اخطار داد)
+    assert subtract_ranges(parse_jalali("1405/02/01"), parse_jalali("1405/03/01"), [initial]) == []
+    # کاملاً قبل → دست‌نخورده
+    assert subtract_ranges(parse_jalali("1403/06/01"), parse_jalali("1404/02/15"), [initial]) == [
+        (parse_jalali("1403/06/01"), parse_jalali("1404/02/15"))]
+    # هم‌پوشانی از دو طرف → فقط دو تکه‌ی استعلام‌نشده
+    out = subtract_ranges(parse_jalali("1404/10/01"), parse_jalali("1405/09/30"), [initial])
+    assert out == [(parse_jalali("1404/10/01"), parse_jalali("1404/12/29")),
+                   (parse_jalali("1405/08/17"), parse_jalali("1405/09/30"))]
+    # بازه‌ی exclude بیرون از بازه‌ی کاربر
+    assert subtract_ranges(parse_jalali("1405/01/10"), parse_jalali("1405/01/20"), [initial]) == []
+    # بدون exclude
+    assert subtract_ranges(parse_jalali("1405/01/01"), parse_jalali("1405/01/31"), []) == [
+        (parse_jalali("1405/01/01"), parse_jalali("1405/01/31"))]
 
 
 def test_looks_like_secret():

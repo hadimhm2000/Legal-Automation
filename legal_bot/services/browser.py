@@ -188,6 +188,20 @@ def text_re(*words: str) -> re.Pattern:
     return re.compile("|".join(parts))
 
 
+# نوشتن مقدار در input فقط‌خواندنی (مثل datepickerهای شمسی) + رویدادهای AngularJS
+SET_INPUT_JS = r"""
+([sel, value]) => {
+  const el = document.querySelector(sel);
+  if (!el) return false;
+  el.removeAttribute('readonly');
+  el.value = value;
+  for (const t of ['input', 'change', 'blur']) el.dispatchEvent(new Event(t, {bubbles: true}));
+  try { if (window.angular) window.angular.element(el).triggerHandler('input'); } catch (e) {}
+  return true;
+}
+"""
+
+
 async def visible(locator, timeout=0) -> bool:
     try:
         if timeout:

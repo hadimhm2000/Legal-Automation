@@ -23,7 +23,7 @@ from playwright.async_api import Page
 from .. import config, keyboards as K
 from ..utils import fa_date, normalize_fa, to_fa_digits, to_jalali_str, today_tehran
 from . import selectors as S
-from .browser import click_text, human_pause, page_text, pdf_of, text_re, visible, wait_first
+from .browser import SET_INPUT_JS, click_text, human_pause, page_text, pdf_of, text_re, visible, wait_first
 from .notice_parser import TABLE_JS, parse_notice_text
 from .session import FlowError
 
@@ -70,18 +70,6 @@ ATTACH_JS = r"""
       a => vis(a) && (a.innerText || '').trim() === 'مشاهده');
   links.forEach((a, i) => a.setAttribute('data-lb-att', String(i)));
   return links.length;
-}
-"""
-
-SET_INPUT_JS = r"""
-([sel, value]) => {
-  const el = document.querySelector(sel);
-  if (!el) return false;
-  el.removeAttribute('readonly');
-  el.value = value;
-  for (const t of ['input', 'change', 'blur']) el.dispatchEvent(new Event(t, {bubbles: true}));
-  try { if (window.angular) window.angular.element(el).triggerHandler('input'); } catch (e) {}
-  return true;
 }
 """
 
