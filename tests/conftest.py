@@ -24,3 +24,11 @@ async def db():
     d = await DB(":memory:").connect()
     yield d
     await d.close()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _close_browser_pool():
+    """مرورگر مشترک هر تست در پایان همان تست بسته می‌شود."""
+    yield
+    from legal_bot.services.browser import shutdown_pool
+    await shutdown_pool()

@@ -22,21 +22,237 @@ from .. import config
 from ..utils import normalize_fa
 
 log = logging.getLogger(__name__)
-_sem: asyncio.Semaphore | None = None
+
+try:  # برای سنجش رم آزاد سرور (اختیاری؛ اگر نصب نبود فقط سقف هم‌زمانی اعمال می‌شود)
+    import psutil
+except Exception:  # pragma: no cover
+    psutil = None
+
+# آدرس‌های آمار/تبلیغ که برای کار ربات لازم نیستند و فقط رم و پهنای باند می‌گیرند
+_TRACKER_RE = re.compile(r"google-analytics|googletagmanager|doubleclick|yandex\.(ru|com)/metrika|mc\.yandex|"
+                         r"hotjar|clarity\.ms|facebook\.net|connect\.facebook", re.I)
+
+# فلگ‌های سبک‌سازی Chromium (بی‌خطر؛ روی رفتار سایت اثری ندارند)
+_LEAN_ARGS = [
+    "--disable-extensions", "--disable-background-networking", "--disable-component-update",
+    "--disable-sync", "--disable-default-apps", "--no-first-run", "--mute-audio",
+    "--disable-features=Translate,MediaRouter,OptimizationHints,AutofillServerCommunication",
+    "--disable-background-timer-throttling",
+]
 
 
-def semaphore() -> asyncio.Semaphore:
-    global _sem
-    if _sem is None:
-        _sem = asyncio.Semaphore(config.MAX_CONCURRENT_BROWSERS)
-    return _sem
+def free_ram_mb() -> float | None:
+    if psutil is None:
+        return None
+    try:
+        return psutil.virtual_memory().available / (1024 * 1024)
+    except Exception:  # pragma: no cover
+        return None
+
+
+# ── صف ورود: سقف هم‌زمانی + محافظ رم ─────────────────────────────────
+class Admission:
+    """هر کار مرورگری قبل از شروع یک «نوبت» می‌گیرد.
+
+    - حداکثر MAX_CONCURRENT_BROWSERS کار هم‌زمان؛
+    - اگر رم آزاد سرور کمتر از MIN_FREE_RAM_MB شد، کار جدید منتظر می‌ماند (تا پروژه‌های دیگرِ
+      همین سرور گیر نکنند) — مگر هیچ کاری در حال اجرا نباشد؛
+    - صف «اول‌آمده، اول‌رفته» است و جایگاه هر نفر از طریق on_queue(pos) به او اعلام می‌شود.
+    """
+
+    def __init__(self):
+        self.active = 0
+        self._queue: list[object] = []
+        self._cond = asyncio.Condition()
+
+    @property
+    def waiting(self) -> int:
+        return len(self._queue)
+
+    def _can_admit(self) -> bool:
+        if self.active >= max(1, config.MAX_CONCURRENT_BROWSERS):
+            return False
+        if self.active == 0:
+            return True
+        free = free_ram_mb()
+        return free is None or free >= config.MIN_FREE_RAM_MB
+
+    async def acquire(self, on_queue=None):
+        ticket = object()
+        last_pos = None
+        async with self._cond:
+            self._queue.append(ticket)
+            try:
+                while True:
+                    if self._queue[0] is ticket and self._can_admit():
+                        self._queue.pop(0)
+                        self.active += 1
+                        self._cond.notify_all()
+                        return
+                    pos = self._queue.index(ticket) + 1
+                    if on_queue is not None and pos != last_pos:
+                        last_pos = pos
+                        _fire(on_queue(pos))
+                    # رم ممکن است بدون آزاد شدن نوبت هم خالی شود → هر چند ثانیه دوباره بررسی
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(self._cond.wait(), config.QUEUE_POLL_SEC)
+            except BaseException:
+                with contextlib.suppress(ValueError):
+                    self._queue.remove(ticket)
+                self._cond.notify_all()
+                raise
+
+    async def release(self):
+        async with self._cond:
+            self.active = max(0, self.active - 1)
+            self._cond.notify_all()
+
+
+_bg: set = set()
+
+
+def _fire(coro):
+    """اجرای پیام صف در پس‌زمینه (خطای ارسال نباید صف را خراب کند)."""
+    async def safe():
+        with contextlib.suppress(Exception):
+            await coro
+    t = asyncio.get_running_loop().create_task(safe())
+    _bg.add(t)
+    t.add_done_callback(_bg.discard)
+
+
+# ── یک مرورگر مشترک؛ برای هر کار فقط یک context جدا ───────────────────
+class _Gen:
+    """یک نسل مرورگر. بعد از BROWSER_RECYCLE_AFTER کار «بازنشسته» می‌شود و وقتی آخرین
+    کارش تمام شد بسته می‌شود (جلوی نشت تدریجی رم Chromium را می‌گیرد)."""
+
+    def __init__(self, browser):
+        self.browser = browser
+        self.active = 0
+        self.served = 0
+        self.retired = False
+        self.dead = False
+        browser.on("disconnected", lambda *_: setattr(self, "dead", True))
+
+
+class BrowserPool:
+    def __init__(self):
+        self.loop = asyncio.get_running_loop()
+        self.admission = Admission()
+        self._pw = None
+        self._gen: _Gen | None = None
+        self._old: list[_Gen] = []
+        self._lock = asyncio.Lock()
+
+    async def _launch(self):
+        if self._pw is None:
+            self._pw = await async_playwright().start()
+        args = ["--disable-blink-features=AutomationControlled", *_LEAN_ARGS]  # نشانه‌های اتوماسیون کمتر
+        if not config.HEADLESS:
+            # پنجره‌ی قابل‌مشاهده در گوشه‌ی بالا-چپ (متمایز از ربات اصلی)
+            if config.BROWSER_WINDOW_POSITION:
+                args.append(f"--window-position={config.BROWSER_WINDOW_POSITION}")
+            if config.BROWSER_WINDOW_SIZE:
+                args.append(f"--window-size={config.BROWSER_WINDOW_SIZE}")
+        try:
+            b = await self._pw.chromium.launch(headless=config.HEADLESS, args=args)
+        except Exception:
+            if config.HEADLESS:
+                raise
+            # سرور بدون نمایشگر → برگشت خودکار به headless
+            log.warning("launching a visible browser failed (no display?); falling back to headless")
+            b = await self._pw.chromium.launch(headless=True, args=args)
+        log.info("🌐 مرورگر مشترک راه‌اندازی شد (%s)", "headless" if config.HEADLESS else "visible")
+        return _Gen(b)
+
+    async def new_context(self, **kw):
+        """(gen, context) — context کوکی/نشست کاملاً جدا دارد."""
+        async with self._lock:
+            g = self._gen
+            if g is not None and (g.dead or not g.browser.is_connected() or g.retired):
+                self._gen = None
+                if g.active == 0:     # کاری روی نسل قبلی نمانده → همین حالا بسته شود
+                    with contextlib.suppress(Exception):
+                        await g.browser.close()
+                else:                 # با پایان آخرین کارش در done() بسته می‌شود
+                    self._old.append(g)
+                g = None
+            if g is None:
+                g = self._gen = await self._launch()
+            g.active += 1
+            g.served += 1
+            if g.served >= max(1, config.BROWSER_RECYCLE_AFTER):
+                g.retired = True
+        try:
+            ctx = await g.browser.new_context(**kw)
+        except Exception:
+            await self.done(g)
+            raise
+        return g, ctx
+
+    async def done(self, g: _Gen):
+        g.active = max(0, g.active - 1)
+        if g.active == 0 and (g.retired or g.dead) and g is not self._gen:
+            with contextlib.suppress(Exception):
+                await g.browser.close()
+            with contextlib.suppress(ValueError):
+                self._old.remove(g)
+
+    def stats(self) -> dict:
+        return {"active": self.admission.active, "waiting": self.admission.waiting,
+                "free_ram_mb": round(free_ram_mb() or 0)}
+
+    async def close(self):
+        for g in [*self._old, self._gen]:
+            if g is not None:
+                with contextlib.suppress(Exception):
+                    await g.browser.close()
+        self._old, self._gen = [], None
+        if self._pw is not None:
+            with contextlib.suppress(Exception):
+                await self._pw.stop()
+        self._pw = None
+
+
+_pool: BrowserPool | None = None
+
+
+def pool() -> BrowserPool:
+    global _pool
+    loop = asyncio.get_running_loop()
+    if _pool is None or _pool.loop is not loop:   # هر event loop (مثلاً هر تست) مخزن خودش را دارد
+        _pool = BrowserPool()
+    return _pool
+
+
+async def shutdown_pool():
+    global _pool
+    if _pool is not None and _pool.loop is asyncio.get_running_loop():
+        await _pool.close()
+    _pool = None
+
+
+async def _route_filter(route):
+    req = route.request
+    rtype = req.resource_type
+    if rtype != "document" and (rtype in config.BLOCK_RESOURCE_TYPES
+                                or (config.BLOCK_TRACKERS and _TRACKER_RE.search(req.url))):
+        with contextlib.suppress(Exception):
+            await route.abort()
+        return
+    with contextlib.suppress(Exception):
+        await route.continue_()
 
 
 class Browser:
-    """async with Browser() as br:  br.context / br.page  — همیشه در خروج بسته می‌شود."""
+    """async with Browser(on_queue=...) as br:  br.context / br.page — همیشه در خروج بسته می‌شود.
 
-    def __init__(self):
-        self._pw = None
+    همه‌ی کارها یک Chromium مشترک دارند و هر کار فقط یک context جدا (کوکی/نشست جدا) می‌گیرد؛
+    این کار مصرف رم هر کاربر را از چند صد مگابایت به حدود ۱۰۰ مگابایت می‌رساند.
+    """
+
+    def __init__(self, on_queue=None):
+        self.on_queue = on_queue
         self.browser = None
         self.context = None
         self.page: Page | None = None
@@ -44,38 +260,26 @@ class Browser:
         self.pdfs: list[bytes] = []   # PDFهایی که در هر تب باز/دانلود شدند (headless نمایشگر PDF ندارد)
         self._pdf_keys: list[tuple] = []
         self._held = False
+        self._pool: BrowserPool | None = None
+        self._gen: _Gen | None = None
 
     async def __aenter__(self):
-        await semaphore().acquire()
+        self._pool = pool()
+        await self._pool.admission.acquire(self.on_queue)
         self._held = True
         try:
-            self._pw = await async_playwright().start()
-            args = ["--disable-blink-features=AutomationControlled"]  # مثل ربات اصلی؛ نشانه‌های اتوماسیون کمتر
-            if not config.HEADLESS:
-                # پنجره‌ی قابل‌مشاهده در گوشه‌ی بالا-چپ (متمایز از ربات اصلی)
-                if config.BROWSER_WINDOW_POSITION:
-                    args.append(f"--window-position={config.BROWSER_WINDOW_POSITION}")
-                if config.BROWSER_WINDOW_SIZE:
-                    args.append(f"--window-size={config.BROWSER_WINDOW_SIZE}")
-            try:
-                self.browser = await self._pw.chromium.launch(headless=config.HEADLESS, args=args)
-            except Exception:
-                if config.HEADLESS:
-                    raise
-                # سرور بدون نمایشگر (X/Display نداریم) → برگشت خودکار به headless
-                log.warning("launching a visible browser failed (no display?); falling back to headless")
-                self.browser = await self._pw.chromium.launch(headless=True, args=args)
-            self.context = await self.browser.new_context(
+            self._gen, self.context = await self._pool.new_context(
                 locale="fa-IR", viewport=None if not config.HEADLESS else {"width": 1366, "height": 900},
                 no_viewport=not config.HEADLESS,  # در حالت قابل‌مشاهده صفحه کل پنجره را می‌گیرد
                 accept_downloads=True,
                 ignore_https_errors=config.IGNORE_HTTPS_ERRORS)
+            self.browser = self._gen.browser
             self.context.set_default_timeout(20_000)
+            if config.BLOCK_RESOURCE_TYPES or config.BLOCK_TRACKERS:
+                await self.context.route("**/*", _route_filter)
             self.context.on("page", self._attach)
             self.context.on("response", self._on_response)
             self.page = await self.context.new_page()
-            if not config.HEADLESS:
-                log.info("👀 مرورگر قابل‌مشاهده باز شد (ربات حقوقی — پنجره‌ی بالا-چپ)")
             return self
         except Exception:
             await self.close()
@@ -134,17 +338,16 @@ class Browser:
         await self.close()
 
     async def close(self):
-        for obj in (self.context, self.browser):
-            if obj is not None:
-                with contextlib.suppress(Exception):
-                    await obj.close()
-        if self._pw is not None:
+        if self.context is not None:
             with contextlib.suppress(Exception):
-                await self._pw.stop()
-        self.context = self.browser = self._pw = self.page = None
+                await self.context.close()
+        if self._gen is not None and self._pool is not None:
+            with contextlib.suppress(Exception):
+                await self._pool.done(self._gen)
+        self.context = self.browser = self.page = self._gen = None
         if self._held:
             self._held = False
-            semaphore().release()
+            await self._pool.admission.release()
 
     def pop_dialogs(self) -> list[str]:
         d, self.dialogs = self.dialogs, []

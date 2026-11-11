@@ -64,7 +64,13 @@ CHECK_TIMES = [t.strip() for t in os.environ.get("CHECK_TIMES", "08:00,18:00").s
 CASE_TRACK_TIME = os.environ.get("CASE_TRACK_TIME", "08:00")
 REMINDER_TIME = os.environ.get("REMINDER_TIME", "09:00")
 MAX_CHECKS_PER_USER_PER_DAY = _int("MAX_CHECKS_PER_USER_PER_DAY", 6)
-MAX_CONCURRENT_BROWSERS = _int("MAX_CONCURRENT_BROWSERS", 2)
+# ظرفیت: همه‌ی کارها یک Chromium مشترک دارند و هر کار فقط یک context (~۸۰–۱۵۰ مگابایت).
+MAX_CONCURRENT_BROWSERS = _int("MAX_CONCURRENT_BROWSERS", 20)   # سقف کار مرورگری هم‌زمان؛ بقیه در صف
+MIN_FREE_RAM_MB = _int("MIN_FREE_RAM_MB", 2048)     # اگر رم آزاد سرور کمتر شد، کار جدید صبر می‌کند
+QUEUE_POLL_SEC = _int("QUEUE_POLL_SEC", 3)          # فاصله‌ی بررسی دوباره‌ی صف/رم
+QUEUE_NOTIFY_MIN_SEC = _int("QUEUE_NOTIFY_MIN_SEC", 15)  # حداقل فاصله‌ی به‌روزرسانی پیام جایگاه صف
+BROWSER_RECYCLE_AFTER = _int("BROWSER_RECYCLE_AFTER", 150)  # بعد از این تعداد کار، مرورگر تازه (ضد نشت رم)
+PROMPT_SPREAD_SEC = _int("PROMPT_SPREAD_SEC", 600)  # پیام‌های ۸ و ۱۸ در این بازه پخش می‌شوند (۰ = یک‌جا)
 
 ADLIRAN_BASE_URL = os.environ.get("ADLIRAN_BASE_URL", "https://adliran.ir/")
 EBLAGH_MAIN_URL = os.environ.get("EBLAGH_MAIN_URL", "http://eblagh1.adliran.ir")
@@ -113,9 +119,13 @@ RC_TAB_INFO_WAIT_SEC = _int("RC_TAB_INFO_WAIT_SEC", 30)  # صبر برای در�
 RC_TAB_MAX_TRIES = _int("RC_TAB_MAX_TRIES", 5)      # ۳۰ ثانیه اطلاعات نیامد → دوباره همان تب
 
 # ── مرورگر ──
-# پیش‌فرض ۰ = مرورگر «قابل مشاهده» باز می‌شود تا رفتار ربات را ببینید.
-# روی سرور بدون نمایشگر، خودکار به headless برمی‌گردد.
-HEADLESS = os.environ.get("HEADLESS", "0") != "0"
+# پیش‌فرض ۱ = نامرئی (headless) — برای سرور و تعداد کاربر بالا بسیار سبک‌تر است.
+# ۰ = مرورگر «قابل مشاهده» تا رفتار ربات را ببینید (فقط برای تست/عیب‌یابی).
+HEADLESS = os.environ.get("HEADLESS", "1") != "0"
+# نوع درخواست‌هایی که دانلود نمی‌شوند (رم/پهنای باند کمتر). عکس‌ها مسدود نمی‌شوند (کپچا لازم است)
+# و فونت‌ها هم نه (ظاهر PDFهای چاپی). نمونه: media,font
+BLOCK_RESOURCE_TYPES = {t.strip() for t in os.environ.get("BLOCK_RESOURCE_TYPES", "media").split(",") if t.strip()}
+BLOCK_TRACKERS = os.environ.get("BLOCK_TRACKERS", "1") != "0"   # اسکریپت‌های آمار/تبلیغ
 # پنجره‌ی این ربات گوشه‌ی بالا-چپ و کمی بلندتر باز می‌شود تا با پنجره‌ی
 # ربات اصلی (وسط صفحه، ۱۳۶۶×۷۶۸) قاطی نشود.
 BROWSER_WINDOW_POSITION = os.environ.get("BROWSER_WINDOW_POSITION", "0,0")

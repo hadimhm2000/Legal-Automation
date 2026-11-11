@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 
-from .. import texts as T
+from .. import config, texts as T
 from . import error_reporter
 from .browser import Browser
-from .sana_login import SanaLogin
+from .sana_login import SanaLogin, collect_credentials
 from .session import FlowError, Job, JobCancelled, UserTimeout, vault
 
 log = logging.getLogger(__name__)
@@ -37,19 +38,63 @@ class RunCtx:
                                     steps_ok=(r or {}).get("steps_ok", ""))
 
 
+class QueueNotice:
+    """یک پیام «جایگاه شما در صف» که با جابه‌جایی صف ویرایش می‌شود (نه پیام‌های پشت‌سرهم)."""
+
+    def __init__(self, job: Job):
+        self.job = job
+        self.msg = None
+        self.last = 0.0
+        self.pos = None
+        self.done = False
+        self._lock = asyncio.Lock()
+
+    async def __call__(self, pos: int):
+        async with self._lock:
+            if not self.done:
+                await self._show(pos)
+
+    async def _show(self, pos: int):
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        text = T.QUEUE_WAIT.format(pos=pos)
+        if self.msg is None:
+            self.msg = await self.job.say(text)
+        elif pos < (self.pos or pos + 1) and now - self.last >= config.QUEUE_NOTIFY_MIN_SEC:
+            with contextlib.suppress(Exception):
+                await self.job.bot.edit_message_text(text, chat_id=self.job.chat_id,
+                                                     message_id=self.msg.message_id)
+        else:
+            return
+        self.pos, self.last = pos, now
+
+    async def started(self):
+        async with self._lock:
+            self.done = True
+        if self.msg is not None:
+            with contextlib.suppress(Exception):
+                await self.job.bot.edit_message_text(T.QUEUE_GO, chat_id=self.job.chat_id,
+                                                     message_id=self.msg.message_id)
+
+
 async def run_with_browser(ctx: RunCtx, target: str, work, *, consent=True):
     """work(ctx, br, login, page) را با ورود به `target` اجرا می‌کند."""
     job = ctx.job
     await ctx.start()
     login = None
+    creds_asked = False
     try:
         if consent:
             await ctx.step("L03")
             await job.ask_choice(T.CONSENT_TEXT, [("ok", T.CONFIRM)])
         # بعد از تأیید کاربر: بازخورد فوری تا کاربر بداند باید منتظر بماند
         # (مرورگر باز می‌شود و تا اولین پیام ورود ممکن است چند لحظه طول بکشد)
+        creds_asked = True
+        await collect_credentials(job, ctx)
         await job.say(T.PLEASE_WAIT)
-        async with Browser() as br:
+        notice = QueueNotice(job)
+        async with Browser(on_queue=notice) as br:
+            await notice.started()
             login = SanaLogin(ctx, br, target)
             page = await login.run()
             await job.say(T.LOGIN_OK)
@@ -83,7 +128,7 @@ async def run_with_browser(ctx: RunCtx, target: str, work, *, consent=True):
         await job.say(T.SEND_FAILED_USER if cat == "SEND_FAILED" else T.SITE_DOWN)
     finally:
         vault.wipe(job.owner)
-        if login is not None and login.used_credentials:
+        if creds_asked or (login is not None and login.used_credentials):
             try:
                 await asyncio.shield(job.say(T.CREDS_WIPED))
             except BaseException:

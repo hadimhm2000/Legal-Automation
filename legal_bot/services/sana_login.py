@@ -59,6 +59,18 @@ def _validate_otp(v):
     return (v, None) if 4 <= len(v) <= 10 else (None, "رمز موقت باید فقط عدد (معمولاً ۶ رقم) باشد.")
 
 
+async def collect_credentials(job, ctx):
+    """کدملی و رمز شخصی پیش از گرفتن مرورگر پرسیده می‌شوند تا زمانِ صف و تایپ کاربر
+    ظرفیت مرورگر را اشغال نکند (فقط در vault همین Job؛ در پایان Job پاک می‌شوند).
+    رمز موقت (OTP) طبیعتاً بعد از باز شدن سامانه پرسیده می‌شود."""
+    await ctx.step("L05")
+    if vault.get(job.owner, "nc") is None:
+        await job.ask_secret("nc", T.ASK_NATIONAL_CODE, _validate_nc, mask_national_code)
+    await ctx.step("L06")
+    if vault.get(job.owner, "pw") is None:
+        await job.ask_secret("pw", T.ASK_PASSWORD, _validate_pw)
+
+
 class _Restart(Exception):
     pass
 

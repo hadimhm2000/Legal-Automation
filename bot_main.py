@@ -21,6 +21,7 @@ from legal_bot.handlers import admin, cases, job_input, notices, payment, plans,
 from legal_bot.handlers.common import BetaGate
 from legal_bot.services import error_reporter, scheduler
 from legal_bot.services.bale_session import BaleDirectUploadSession
+from legal_bot.services.browser import shutdown_pool
 from legal_bot.services.session import jobs, vault
 
 
@@ -105,14 +106,16 @@ async def main():
     dp["bot"] = bot
     stop = asyncio.Event()
     sched = asyncio.create_task(scheduler.run(bot, db, stop))
-    logging.info("legal bot started (API: %s, browser: %s)", config.BALE_API_BASE,
-                 "headless" if config.HEADLESS else "visible")
+    logging.info("legal bot started (API: %s, browser: %s, max concurrent: %d, min free RAM: %d MB)",
+                 config.BALE_API_BASE, "headless" if config.HEADLESS else "visible",
+                 config.MAX_CONCURRENT_BROWSERS, config.MIN_FREE_RAM_MB)
     try:
         await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
     finally:
         stop.set()
         await jobs.shutdown()
         sched.cancel()
+        await shutdown_pool()
         await db.close()
         await bot.session.close()
 

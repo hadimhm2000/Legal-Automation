@@ -80,6 +80,19 @@ async def tick(message: Message, db):
     await message.answer(f"✅ {n} یادآوری ارسال شد.")
 
 
+@router.message(Command("legal_load"))
+async def load(message: Message):
+    from ..services.browser import pool
+    from ..services.session import jobs
+    st = pool().stats()
+    await message.answer(
+        "📊 بار سرور (ربات حقوقی)\n"
+        f"کار مرورگری در حال اجرا: {st['active']} از {config.MAX_CONCURRENT_BROWSERS}\n"
+        f"در صف: {st['waiting']}\n"
+        f"کاربرِ دارای فرایند باز: {len(jobs.jobs)}\n"
+        f"رم آزاد سرور: {st['free_ram_mb']:,} مگابایت (حداقل لازم: {config.MIN_FREE_RAM_MB:,})")
+
+
 @router.message(Command("legal_help"))
 async def help_(message: Message):
     await message.answer(
@@ -91,4 +104,5 @@ async def help_(message: Message):
         "/legal_deny <id> — حذف از فهرست بتا\n"
         "/legal_guide — جایگزینی PDF راهنما (بعد از دستور، فایل را بفرستید)\n"
         "/legal_tick — ارسال دستی یادآوری‌های امروز\n"
+        "/legal_load — بار سرور: کارهای هم‌زمان، صف و رم آزاد\n"
         "تأیید/رد رسیدها با دکمه‌های زیر هر رسید انجام می‌شود.")

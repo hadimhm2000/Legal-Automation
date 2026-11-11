@@ -26,10 +26,20 @@ async def _active_users(db):
                         "WHERE s.status IN ('TRIAL_ACTIVE','PAID_ACTIVE')")
 
 
+def _gap(n: int) -> float:
+    """فاصله‌ی بین پیام‌ها تا کل پیام‌ها در PROMPT_SPREAD_SEC پخش شوند (همه با هم مرورگر نخواهند)."""
+    return (config.PROMPT_SPREAD_SEC / n) if n > 1 and config.PROMPT_SPREAD_SEC > 0 else 0.05
+
+
 async def notices_prompt(bot, db, slot: str):
+    targets = []
     for u in await _active_users(db):
-        if not await db.is_beta(u["bale_id"]) or not await sub.has_service(db, u["bale_id"], "notices"):
-            continue
+        if await db.is_beta(u["bale_id"]) and await sub.has_service(db, u["bale_id"], "notices"):
+            targets.append(u)
+    gap = _gap(len(targets))
+    for i, u in enumerate(targets):
+        if i:
+            await asyncio.sleep(gap)
         try:
             await bot.send_message(u["chat_id"], "📩 زمان بررسی ابلاغیه‌ها است. در صورت نیاز درخواست بررسی را ثبت کنید.",
                                    reply_markup=K.inline([[("🔍 بررسی کن", f"chk:go:scheduled_{slot}"),
@@ -39,11 +49,19 @@ async def notices_prompt(bot, db, slot: str):
 
 
 async def tracking_prompt(bot, db):
+    targets = []
     for u in await _active_users(db):
-        if not await sub.has_service(db, u["bale_id"], "case_alerts") or not await db.tracked(u["bale_id"]):
-            continue
+        if await sub.has_service(db, u["bale_id"], "case_alerts"):
+            n = len(await db.tracked(u["bale_id"]) or [])
+            if n:
+                targets.append((u, n))
+    gap = _gap(len(targets))
+    # نیم‌گام جابه‌جا تا با پیام‌های ابلاغیه‌ی همان ساعت ۸ هم‌زمان نشود
+    await asyncio.sleep(gap / 2 if len(targets) > 1 else 0)
+    for i, (u, n) in enumerate(targets):
+        if i:
+            await asyncio.sleep(gap)
         try:
-            n = len(await db.tracked(u["bale_id"]))
             await bot.send_message(u["chat_id"], f"📂 بررسی روزانه‌ی {n} پرونده‌ی ثبت‌شده: برای ورود و بررسی آخرین "
                                    "تغییرات دکمه‌ی زیر را بزنید.",
                                    reply_markup=K.inline([[("🔍 بررسی کن", "trk:go:scheduled")]]))
@@ -99,6 +117,21 @@ async def subscription_tick(bot, db):
         await db.wipe_user_data(s["bale_id"])
 
 
+_tasks: set = set()
+
+
+def _background(coro, name):
+    """پیام‌های پخش‌شده در پس‌زمینه می‌روند تا حلقه‌ی زمان‌بندی (یادآوری‌ها، اشتراک) معطل نشود."""
+    async def safe():
+        try:
+            await coro
+        except Exception:
+            log.exception("%s failed", name)
+    t = asyncio.create_task(safe(), name=name)
+    _tasks.add(t)
+    t.add_done_callback(_tasks.discard)
+
+
 async def run(bot, db, stop: asyncio.Event):
     while not stop.is_set():
         try:
@@ -106,10 +139,10 @@ async def run(bot, db, stop: asyncio.Event):
             hm, day = now.strftime("%H:%M"), now.date().isoformat()
             for t in config.CHECK_TIMES:
                 if hm >= t and now.hour - int(t[:2]) < 1 and await _once(db, f"sched:notices:{day}:{t}"):
-                    await notices_prompt(bot, db, t[:2])
+                    _background(notices_prompt(bot, db, t[:2]), f"notices-{t}")
             t = config.CASE_TRACK_TIME
             if hm >= t and now.hour - int(t[:2]) < 1 and await _once(db, f"sched:track:{day}"):
-                await tracking_prompt(bot, db)
+                _background(tracking_prompt(bot, db), "tracking")
             t = config.REMINDER_TIME
             if hm >= t and await _once(db, f"sched:rem:{day}"):
                 await reminders.daily_tick(bot, db, now.date())
