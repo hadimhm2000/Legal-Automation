@@ -18,15 +18,21 @@ def main_menu():
 
 
 def notices_menu():
-    return reply([[T.N_CHECK], [T.N_BY_CASE], [T.N_BY_RANGE], [T.N_REPORTS], [T.BACK]])
+    return reply([[T.N_CHECK], [T.N_BY_CASE], [T.N_BY_RANGE], [T.N_REPORTS], [T.BACK, T.M_CANCEL]])
 
 
 def reports_menu():
-    return reply([[T.R_CURRENT], [T.R_DONE], [T.R_ALL], [T.R_HEARINGS], [T.R_OPEN_REMINDERS], [T.BACK]])
+    return reply([[T.R_CURRENT], [T.R_DONE], [T.R_ALL], [T.R_HEARINGS], [T.R_OPEN_REMINDERS],
+                  [T.BACK, T.M_CANCEL]])
 
 
 def cases_menu():
-    return reply([[T.C_ALL], [T.C_LIVE], [T.C_ARCHIVED], [T.C_DETAIL], [T.C_TRACK], [T.BACK]])
+    return reply([[T.C_ALL], [T.C_LIVE], [T.C_ARCHIVED], [T.C_DETAIL], [T.C_TRACK], [T.BACK, T.M_CANCEL]])
+
+
+def flow_kb():
+    """کیبورد ثابت حین هر فرایند: فقط «بازگشت به منوی اصلی» و «لغو عملیات»."""
+    return reply([[T.BACK, T.M_CANCEL]])
 
 
 def guide_kb():

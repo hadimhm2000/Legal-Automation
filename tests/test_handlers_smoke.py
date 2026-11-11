@@ -119,9 +119,10 @@ async def test_user_journey(env, db):
     assert T.JOB_BUSY == sess.texts()[-1]
     await send(bot, dp, "140513920000890035")
     assert T.CONSENT_TEXT == sess.texts()[-1]            # تا «تأیید» نزند مرورگری باز نمی‌شود
-    await press(bot, dp, button(sess, T.BACK))
+    await send(bot, dp, T.BACK)                          # دکمه‌ی پایین ربات ← لغو فرایند
     await asyncio.sleep(0.1)
     assert T.CANCELLED in sess.texts()
+    assert T.AUTO_MAIN in sess.texts()                   # بازگشت خودکار به منوی اصلی
     run = await db.one("SELECT * FROM check_runs ORDER BY id DESC LIMIT 1")
     assert run["status"] == "cancelled" and run["kind"] == "notices_case"
 
@@ -139,7 +140,7 @@ async def test_turn_invoice_and_admin_approval(env, db):
     await send(bot, dp, "0500732")
     inv = await db.one("SELECT * FROM invoices WHERE kind='turn'")
     assert inv["amount_toman"] == 70_000 and inv["payload"] == "archive:0500732"
-    assert inv["code"] in sess.texts()[-1]
+    assert any(inv["code"] in (t or "") for t in sess.texts())   # فاکتور + منوی اصلی خودکار بعد از پایان Job
     await db.execute("UPDATE invoices SET status='receipt_sent' WHERE code=?", (inv["code"],))
     await press(bot, dp, f"adm:ok:{inv['code']}")
     assert button(sess, "شروع ثبت نوبت") == f"turn:go:{inv['code']}"

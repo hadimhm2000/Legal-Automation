@@ -60,16 +60,22 @@ async def guide(message: Message, db):
     await send_guide(message.bot, db, message.chat.id)
 
 
-@router.message(F.text == T.M_CANCEL)
+@router.message(F.text.in_({T.M_CANCEL, T.M_CANCEL_OLD}))
 async def cancel(message: Message):
     if jobs.cancel(message.from_user.id):
-        await message.answer(T.CANCELLED, reply_markup=K.main_menu())
+        # منوی اصلی را پایان‌کارِ Job به‌طور خودکار می‌فرستد
+        await message.answer(T.CANCELLED)
     else:
         await message.answer("عملیات فعالی ندارید.", reply_markup=K.main_menu())
 
 
-@router.message(F.text == T.BACK)
+@router.message(F.text.in_({T.BACK, T.BACK_OLD}))
 async def back(message: Message):
+    if jobs.busy(message.from_user.id) and jobs.cancel(message.from_user.id):
+        # حین فرایند، «بازگشت به منوی اصلی» یعنی لغو همین فرایند
+        # منوی اصلی را پایان‌کارِ Job به‌طور خودکار می‌فرستد
+        await message.answer(T.CANCELLED)
+        return
     await show_main(message)
 
 

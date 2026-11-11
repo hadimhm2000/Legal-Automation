@@ -46,6 +46,9 @@ async def run_with_browser(ctx: RunCtx, target: str, work, *, consent=True):
         if consent:
             await ctx.step("L03")
             await job.ask_choice(T.CONSENT_TEXT, [("ok", T.CONFIRM)])
+        # بعد از تأیید کاربر: بازخورد فوری تا کاربر بداند باید منتظر بماند
+        # (مرورگر باز می‌شود و تا اولین پیام ورود ممکن است چند لحظه طول بکشد)
+        await job.say(T.PLEASE_WAIT)
         async with Browser() as br:
             login = SanaLogin(ctx, br, target)
             page = await login.run()

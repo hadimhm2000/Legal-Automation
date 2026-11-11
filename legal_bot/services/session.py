@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import secrets as _secrets
 from dataclasses import dataclass, field
@@ -138,8 +139,14 @@ class Job:
 
     # ── پرسش ──
     async def ask(self, prompt: str, options: list[tuple[str, str]] | None = None, *, accept_text=True,
-                  secret=False, photo: bytes | None = None, back=True, timeout: int | None = None):
-        """خروجی: ("text", متن) یا ("choice", value). «بازگشت» → JobCancelled."""
+                  secret=False, photo: bytes | None = None, back=False, timeout: int | None = None):
+        """خروجی: ("text", متن) یا ("choice", value).
+
+        دکمه‌ی «بازگشت» به‌طور خودکار اضافه نمی‌شود (پیش‌فرض back=False): حین فرایند،
+        کیبورد پایین ربات فقط «بازگشت به منوی اصلی» و «لغو عملیات» است و سؤال‌ها
+        فقط گزینه‌های خودِ همان مرحله را نشان می‌دهند. اگر جایی نیاز به دکمه‌ی بازگشت
+        داخل سؤال باشد، back=True بدهید.
+        """
         self._seq += 1
         options = list(options or [])
         if back:
@@ -258,6 +265,8 @@ class JobManager:
         self.jobs[job.user_id] = job
 
         async def runner():
+            # شروع فرایند: کیبورد پایین ربات فقط «بازگشت به منوی اصلی» و «لغو عملیات»
+            await job.say(T.FLOW_STARTED, kb=K.flow_kb())
             try:
                 await asyncio.wait_for(coro_factory(job), config.JOB_TOTAL_TIMEOUT_SEC)
             except asyncio.TimeoutError:
@@ -265,6 +274,10 @@ class JobManager:
             finally:
                 vault.wipe(job.owner)
                 self.jobs.pop(job.user_id, None)
+                # پایان فرایند (موفق/لغو/خطا/مهلت): بازگشت خودکار به منوی اصلی
+                # shield: اگر همین‌جا دوباره لغو شد، پیام منو در پس‌زمینه ارسال می‌شود
+                with contextlib.suppress(asyncio.CancelledError):
+                    await asyncio.shield(job.say(T.AUTO_MAIN, kb=K.main_menu()))
 
         job.task = asyncio.create_task(runner(), name=f"job-{job.kind}-{job.user_id}")
         return True
