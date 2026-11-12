@@ -15,3 +15,7 @@ session*.json
 backups/
 backups/
 browsers/
+
+.env
+.env.bak_*
+legal-automation-changes.patch
