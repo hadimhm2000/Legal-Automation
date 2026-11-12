@@ -55,6 +55,8 @@ NOTICE_CARD_XPATH = ("xpath=ancestor::*[self::div or self::tr or self::li]"
 # کارت شمارنده‌ی «ابلاغیه بازنشده» روی صفحه‌ی اصلی؛ عدد داخل span کنار <strong> است.
 NEW_BADGE_CARD = ["ابلاغیه بازنشده"]                          # ✅ متن کارت (strong)
 BADGE_CARD_SEL = '[data-lb-badge="new"]'                      # برچسبی که BADGE_JS روی کارت می‌گذارد
+# کارت «ابلاغیه‌های مشاهده شده» صفحه‌ی اصلی (ورود به بخش جستجو — دستور کارفرما)
+VIEWED_CARD_SEL = '[data-lb-viewed="1"]'                      # برچسبی که VIEWED_CARD_JS می‌گذارد
 # دکمه‌ی «مشاهده» هر ردیف جدول ابلاغیه‌ها → مودال #modalXXL باز می‌شود
 OPEN_NOTICE_BTN = 'button[ng-click="actions.openNotice(item,false)"]'   # ✅
 # مودال جزئیات ابلاغیه (وقتی باز است کلاس show می‌گیرد)
@@ -65,6 +67,19 @@ PRINT_BTN_NG = 'button[ng-click="actions.getENoticeDocumentPrint()"]'   # ✅
 # دکمه‌ی «۳ ماه قبل» — بازیابی جدول وقتی بعد از بستن مودال خالی ماند
 MONTHS3_BTN = 'button[ng-click="actions.changeDateWithMonth(-3,1)"]'    # ✅
 MONTHS3_BACK = ["3 ماه قبل", "۳ ماه قبل"]                      # ✅ متن دکمه
+
+# ── فرم «جستجوی ابلاغیه» داخل بخش «ابلاغیه‌های مشاهده شده» (HTML ارسالی کارفرما) ──
+# دکمه‌ی باز کردن فرم جستجو (collapse #SeenEblaghSearchBox)
+SEARCH_BOX_BTN = 'button[data-bs-toggle="collapse"][href="#SeenEblaghSearchBox"]'   # ✅
+SEARCH_BOX_COLLAPSE = "#SeenEblaghSearchBox"                                        # ✅
+# فیلد «شماره پرونده» فرم جستجو
+SEARCH_CASE_INPUT = 'input[ng-model="ENotifySearchCriteria.NoticedDocCaseNo"]'      # ✅
+# فیلد «شماره ابلاغیه» فرم جستجو
+SEARCH_NO_INPUT = 'input[ng-model="ENotifySearchCriteria.NoticedDocNo"]'            # ✅
+# دکمه‌ی «بازیابی ابلاغیه» (فرم جستجو — با «بازیابی اطلاعات» بازه‌ی زمانی فرق دارد)
+SEARCH_GO_NG = 'button[ng-click="actions.getAllENotice(viewModel.pageSize, 1)"]'    # ✅
+# پیام خطای قرمز جستجو («با شرایط وارد شده ابلاغیه‌ای یافت نشد.»)
+SEARCH_ERR_SEL = '.alert-danger[role="alert"]'                                      # ✅
 
 # ── اطلاع‌رسانی پرونده (resultcase.adliran.ir) ──
 RC_LIVE = "#liveCase"                                         # ✅ «مختومه نشده»

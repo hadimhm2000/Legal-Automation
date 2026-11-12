@@ -14,6 +14,15 @@
   اگر ابلاغیه دیگر در فهرست نبود (چون مشاهده شد) ← «بازگشت» ← «ابلاغیه‌های
   مشاهده شده» و پیدا کردن با همان شماره.
   «چاپ گروهی» استفاده نمی‌شود (به برنامه‌ی محلی سمپ‌یار روی localhost:8010 نیاز دارد).
+
+جستجوی ابلاغیه‌های صادره براساس شماره پرونده / شماره ابلاغیه (دستور کارفرما):
+  بعد از لاگین روی کارت «ابلاغیه‌های مشاهده شده» کلیک می‌شود ← «جستجوی ابلاغیه»
+  (collapse با href=#SeenEblaghSearchBox) ← شماره در فیلد مربوطه
+  (ENotifySearchCriteria.NoticedDocCaseNo / NoticedDocNo) ← «بازیابی ابلاغیه»
+  (actions.getAllENotice). خالی ماندن → یک بار دیگر «بازیابی ابلاغیه»؛ اگر خطای
+  قرمز «با شرایط وارد شده ابلاغیه‌ای یافت نشد.» آمد، متن آن برای کاربر فرستاده
+  می‌شود. قبل از چاپ، همه‌ی ردیف‌ها (صادرکننده + موضوع + تاریخ) برای کاربر
+  فرستاده می‌شود و فقط مواردی که کاربر انتخاب کند چاپ می‌شوند.
 """
 from __future__ import annotations
 
@@ -112,6 +121,67 @@ BADGE_JS = r"""
 }
 """
 
+# کارت «ابلاغیه‌های مشاهده شده» صفحه‌ی اصلی (HTML ارسالی کارفرما):
+#   <div class="card-body p-3"> … <strong class="text-w-500 …">ابلاغیه‌های<br>مشاهده شده</strong>
+# این کارت دروازه‌ی ورود به بخش جستجوی ابلاغیه است (دستور کارفرما)؛
+# برای کلیک مطمئن، کارت تگ data-lb-viewed می‌گیرد.
+VIEWED_CARD_JS = r"""
+() => {
+  const vis = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  const labels = Array.from(document.querySelectorAll('strong, b, h5, h6'))
+      .filter(e => vis(e) && /ابلاغیه/.test(e.innerText || ''));
+  for (const s of labels) {
+    const t = (s.innerText || '').replace(/[\n\r\t ]+/g, ' ');
+    if (!/مشاهده[\s\u200c]*شده/.test(t)) continue;   // فقط کارت «ابلاغیه‌های مشاهده شده»
+    let card = s;
+    for (let k = 0; k < 6 && card.parentElement; k++) {
+      card = card.parentElement;
+      if (String(card.className || '').indexOf('card') >= 0) break;
+    }
+    (card || s).setAttribute('data-lb-viewed', '1');
+    return true;
+  }
+  return false;
+}
+"""
+
+# ردیف‌های نتیجه‌ی جستجو (tempAllENoticeList): هر ردیف «مشاهده» دارد و متن کارت
+# شامل شماره ابلاغیه / تاریخ صدور / صادر کننده / موضوع ابلاغیه است (HTML کارفرما).
+# دکمه‌ی «مشاهده» هر ردیف هم مثل CARDS_JS تگ data-lb می‌گیرد تا کلیک‌پذیر شود.
+SEARCH_ROWS_JS = r"""
+() => {
+  const vis = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  const norm = s => (s || '').replace(/[۰-۹]/g, d => String(d.charCodeAt(0) - 0x06F0))
+                              .replace(/[٠-٩]/g, d => String(d.charCodeAt(0) - 0x0660));
+  const out = [];
+  const btns = Array.from(document.querySelectorAll('button, a')).filter(
+      b => vis(b) && (b.innerText || '').trim() === 'مشاهده');
+  btns.forEach(b => {
+    let el = b, txt = '';
+    for (let k = 0; k < 8 && el; k++) {
+      el = el.parentElement; if (!el) break;
+      txt = norm(el.innerText || '');
+      if (/شماره\s*ابلاغیه/.test(txt)) break;
+    }
+    const grab = re => {
+      const m = txt.match(re);
+      return m ? m[1].replace(/[\n\r\t ]+/g, ' ').trim() : '';
+    };
+    const id = grab(/شماره\s*ابلاغیه\s*[:：]?\s*(\d{12,20})/);
+    if (!id) return;
+    b.setAttribute('data-lb', id);
+    out.push({
+      id: id,
+      issue_date: grab(/تاریخ\s*صدور\s*[:：]?\s*([\d\/\-.]+)/),
+      issuer: grab(/صادر[\s\u200c]*کننده\s*[:：]?\s*([^\n]+)/),
+      subject: grab(/موضوع\s*ابلاغیه\s*[:：]?\s*([^\n]+)/),
+    });
+  });
+  const seen = new Set();
+  return out.filter(o => !seen.has(o.id) && seen.add(o.id));
+}
+"""
+
 
 class Eblagh:
     def __init__(self, ctx, br, login, page: Page):
@@ -166,11 +236,45 @@ class Eblagh:
         await self._wait_list_ready()
 
     async def open_viewed_list(self):
+        """ورود به «ابلاغیه‌های مشاهده شده» (دستور کارفرما — کلید ورود جستجو):
+
+        بعد از لاگین باید روی کارت «ابلاغیه‌های مشاهده شده» صفحه‌ی اصلی کلیک شود؛
+        کارت با VIEWED_CARD_JS تگ می‌خورد و کلیک می‌شود (جایگزین: متن/دکمه‌ی UI قدیم).
+        اگر از قبل داخل همین بخش هستیم، ناوبری انجام نمی‌شود.
+        """
         await self.ensure()
-        await click_text(self.page, *S.BACK_BTN, timeout=3_000)
-        if not await click_text(self.page, *S.VIEWED_NOTICES, timeout=10_000):
-            raise FlowError("PARSE_CHANGED", "viewed-notices button not found")
+        if await self._on_viewed_list():
+            return
+        if not await self._on_home():
+            # از صفحه‌ی جزئیات/فهرست جدید اول «بازگشت» (اگر وجود دارد)
+            with contextlib.suppress(Exception):
+                await click_text(self.page, *S.BACK_BTN, timeout=2_500)
+        clicked = False
+        with contextlib.suppress(Exception):
+            if await self.page.evaluate(VIEWED_CARD_JS):
+                loc = self.page.locator(S.VIEWED_CARD_SEL)
+                if await visible(loc, timeout=3_000):
+                    with contextlib.suppress(Exception):
+                        await loc.first.click()
+                        clicked = True
+        if not clicked:
+            clicked = await click_text(self.page, *S.VIEWED_NOTICES, timeout=10_000)
+        if not clicked:
+            raise FlowError("PARSE_CHANGED", "viewed-notices card/button not found")
         await self._wait_list_ready()
+
+    async def _on_viewed_list(self) -> bool:
+        """نشانه‌های بودن در صفحه‌ی «ابلاغیه‌های مشاهده شده» (فرم جستجوی ابلاغیه)."""
+        if await visible(self.page.locator(S.SEARCH_BOX_BTN), timeout=1_000):
+            return True
+        return await visible(self.page.locator(S.SEARCH_CASE_INPUT), timeout=1_000)
+
+    async def _on_home(self) -> bool:
+        """صفحه‌ی اصلی سامانه ابلاغ (کارت‌های خدمات روی آن است)."""
+        st = await self._badge_state()
+        if st.get("state") in ("count", "loading"):
+            return True
+        return await self._old_menu_visible()
 
     # ── کارت «ابلاغیه بازنشده» (صفحه‌ی اصلی — دستور کارفرما) ──
     async def _badge_state(self) -> dict:
@@ -309,6 +413,127 @@ class Eblagh:
             if not await self._next_page():
                 break
         return False
+
+    # ── فرم «جستجوی ابلاغیه» (داخل بخش «مشاهده شده» — HTML ارسالی کارفرما) ──
+    async def search_rows(self) -> list[dict]:
+        """ردیف‌های فعلی نتیجه: شماره ابلاغیه + تاریخ صدور + صادرکننده + موضوع."""
+        with contextlib.suppress(Exception):
+            r = await self.page.evaluate(SEARCH_ROWS_JS)
+            if isinstance(r, list):
+                return r
+        return []
+
+    async def all_search_rows(self, max_pages=20) -> list[dict]:
+        seen, out = set(), []
+        for _ in range(max_pages):
+            for c in await self.search_rows():
+                if c["id"] not in seen:
+                    seen.add(c["id"])
+                    out.append(c)
+            if not await self._next_page():
+                break
+        return out
+
+    async def _search_error_text(self) -> str:
+        """متن خطای قرمز جستجو (مثل «با شرایط وارد شده ابلاغیه‌ای یافت نشد.»)."""
+        try:
+            loc = self.page.locator(S.SEARCH_ERR_SEL)
+            if await visible(loc, timeout=1_500):
+                txt = normalize_fa(await loc.first.inner_text(timeout=2_000))
+                return txt.strip()
+        except Exception:
+            pass
+        return ""
+
+    async def _open_search_form(self):
+        """باز کردن فرم «جستجوی ابلاغیه» (دکمه‌ی collapse با href=#SeenEblaghSearchBox)."""
+        loc = self.page.locator(S.SEARCH_BOX_BTN)
+        if await visible(loc, timeout=8_000):
+            try:
+                aria = (await loc.first.get_attribute("aria-expanded") or "").lower()
+            except Exception:
+                aria = ""
+            if aria != "true":        # بسته است → باز کن
+                with contextlib.suppress(Exception):
+                    await loc.first.click()
+                    await human_pause(self.page, 1_200)
+        else:
+            if not await click_text(self.page, *S.SEARCH_NOTICE, timeout=8_000):
+                raise FlowError("PARSE_CHANGED", "search-notice toggle not found")
+            await human_pause(self.page, 1_200)
+
+    async def _fill_search_value(self, css: str, label_words: tuple, value: str):
+        """پرکردن فیلد جستجو — اول با selector دقیق (ng-model)، بعد با label فرم."""
+        loc = self.page.locator(css)
+        if not await visible(loc, timeout=8_000):
+            pat = text_re(*label_words)
+            loc = (self.page.locator("label").filter(has_text=pat)
+                   .locator("xpath=following::input[1]"))
+            if not await visible(loc, timeout=4_000):
+                raise FlowError("PARSE_CHANGED", f"search input not found ({css})")
+        el = loc.first
+        await el.click()
+        await el.fill(value)
+        await human_pause(self.page, 400)
+
+    async def _click_search_go(self) -> bool:
+        """دکمه‌ی «بازیابی ابلاغیه» (actions.getAllENotice — نه «بازیابی اطلاعات» بازه)."""
+        try:
+            await self.page.locator(S.SEARCH_GO_NG).first.click(timeout=8_000)
+            return True
+        except Exception:
+            return await click_text(self.page, *S.SEARCH_NOTICE_GO, timeout=6_000)
+
+    async def _wait_search_done(self, ids_before: set):
+        """صبر تا نتیجه‌ی «بازیابی ابلاغیه» بیاید.
+
+        نشانه‌ها: چرخه‌ی لود دکمه (ng-disabled=viewModel.loading)، یا عوض شدن فهرست
+        کارت‌ها نسبت به قبل، یا پیام خطا/خالی‌بودن. اگر لود دیده نشد، حداکثر ۶ ثانیه
+        صبر می‌کنیم (نتایج برخی جستجوها با فهرست قبل یکی است).
+        """
+        loop = asyncio.get_running_loop()
+        t0 = loop.time()
+        deadline = t0 + config.SEARCH_WAIT_MS / 1000
+        saw_loading = False
+        while loop.time() < deadline:
+            try:
+                enabled = await self.page.locator(S.SEARCH_GO_NG).first.is_enabled()
+            except Exception:
+                enabled = True
+            if not enabled:
+                saw_loading = True
+            elif saw_loading:
+                break                                    # لود تمام شد → نتیجه آماده است
+            else:
+                if await self._search_error_text():
+                    break
+                cur = {c["id"] for c in await self.cards()}
+                if cur and cur != ids_before:
+                    break
+                txt = await page_text(self.page)
+                if not cur and any(w in txt for w in ("یافت نشد", "موردی به نمایش", "رکوردی", "موجود نیست")):
+                    break
+                if loop.time() - t0 > 6:
+                    break
+            await asyncio.sleep(0.4)
+        await human_pause(self.page, 1_000)
+
+    async def run_search(self, field: str, value: str) -> list[dict]:
+        """کل جستجو: «ابلاغیه‌های مشاهده شده» ← «جستجوی ابلاغیه» ← مقدار در فیلد
+        مربوطه ← «بازیابی ابلاغیه» ← ردیف‌های نتیجه.
+
+        field: "case" (شماره پرونده) یا "notice" (شماره ابلاغیه).
+        """
+        css, label = ((S.SEARCH_CASE_INPUT, ("شماره پرونده",)) if field == "case"
+                      else (S.SEARCH_NO_INPUT, ("شماره ابلاغیه",)))
+        await self.open_viewed_list()
+        ids_before = {c["id"] for c in await self.cards()}
+        await self._open_search_form()
+        await self._fill_search_value(css, label, value)
+        if not await self._click_search_go():
+            raise FlowError("PARSE_CHANGED", "search go button not found")
+        await self._wait_search_done(ids_before)
+        return await self.all_search_rows()
 
     # ── یک ابلاغیه ──
     async def _wait_detail(self):
@@ -577,37 +802,144 @@ async def _process_ids(ctx, e: Eblagh, ids, *, is_new, prefer="current"):
         await ctx.job.say(f"✅ {to_fa_digits(len(ids))} ابلاغیه چاپ و ارسال شد.")
 
 
-async def work_by_case(ctx, br, login, page, case_number: str):
-    e = Eblagh(ctx, br, login, page)
-    await e.ensure()
-    if not await click_text(e.page, *S.SEARCH_NOTICE, timeout=10_000):
-        raise FlowError("PARSE_CHANGED", "search-notice button not found")
-    await human_pause(e.page, 1200)
-    inp = e.page.locator("input[type=text]:visible, input:not([type]):visible").filter(
-        has_not=e.page.locator(f"{S.RANGE_FROM}, {S.RANGE_TO}"))
-    target = None
-    for i in range(await inp.count()):
-        el = inp.nth(i)
-        name = normalize_fa((await el.get_attribute("placeholder") or "") + (await el.get_attribute("name") or "")
-                            + (await el.get_attribute("ng-model") or ""))
-        if re.search(r"پرونده|case", name, re.I):
-            target = el
+def _text_chunks(text: str, size: int = 3500) -> list[str]:
+    """شکستن متن بلند به تکه‌های زیر سقف پیام بله/تلگرام — بدون بریدن یک خط."""
+    out, cur = [], ""
+    for line in text.split("\n"):
+        if len(cur) + len(line) + 1 > size:
+            out.append(cur)
+            cur = line
+        else:
+            cur = f"{cur}\n{line}" if cur else line
+    if cur:
+        out.append(cur)
+    return out
+
+
+async def _ask_which_to_print(ctx, rows: list[dict], *, what: str) -> list[str]:
+    """فهرست ردیف‌های پیدا‌شده را با صادرکننده/موضوع/تاریخ برای کاربر می‌فرستد و
+    می‌پرسد کدام‌ها چاپ شوند (دستور کارفرما: «بگو که کدام از موارد بالا را نیاز
+    دارید تا چاپ بگیریم»). خروجی: شناسه‌های انتخابی (خالی = هیچ‌کدام)."""
+    job = ctx.job
+    lines = [T.SEARCH_FOUND_ROWS.format(what=what, n=to_fa_digits(len(rows)))]
+    for i, r in enumerate(rows, 1):
+        lines.append(T.SEARCH_ROW_ITEM.format(
+            n=to_fa_digits(i), id=to_fa_digits(r["id"]),
+            date=to_fa_digits(r.get("issue_date") or "-"),
+            issuer=(r.get("issuer") or "-")[:100],
+            subject=(r.get("subject") or "-")[:150]))
+    for chunk in _text_chunks("\n".join(lines)):
+        await job.say(chunk)
+    n = len(rows)
+    options = [(str(i), to_fa_digits(i)) for i in range(1, n + 1)]
+    options += [("all", T.SEARCH_PRINT_ALL), ("none", T.SEARCH_PRINT_NONE)]
+    prompt = T.SEARCH_WHICH_TO_PRINT
+    for _ in range(3):  # پاسخ نامفهوم → دوباره بپرس
+        kind, v = await job.ask(prompt, options, accept_text=True, grid=4)
+        if kind == "choice":
+            if v == "none":
+                return []
+            if v == "all":
+                return [r["id"] for r in rows]
+            return [rows[int(v) - 1]["id"]]
+        t = normalize_fa(v)
+        if "همه" in t:
+            return [r["id"] for r in rows]
+        nums = sorted({int(x) for x in re.findall(r"\d+", t) if 1 <= int(x) <= n})
+        if nums:
+            return [rows[i - 1]["id"] for i in nums]
+        prompt = T.SEARCH_BAD_CHOICE
+    return []
+
+
+async def _print_search_results(ctx, e: Eblagh, ids: list[str], redo):
+    """چاپ ابلاغیه‌های انتخاب‌شده — همان روند مشاهده تا چاپ ابلاغیه‌های بازنشده.
+
+    اگر بعد از بستن مودال فهرست نتیجه خالی/گم شده بود، جستجو دوباره انجام می‌شود
+    (`redo`) و بعد ردیف موردنظر باز و چاپ می‌شود.
+    """
+    failed = []
+    for ext in ids:
+        info = None
+        for round_ in range(2):
+            # دور اول: جستجوی دوباره فقط اگر ردیف گم شده باشد؛ دور دوم: همیشه (بازسازی صفحه)
+            if round_ or ext not in [c["id"] for c in await e.cards()]:
+                await redo()
+            if not await e._click_card(ext):
+                continue
+            await e._wait_detail()
+            await human_pause(e.page, 2_000)
+            popup = await e._open_print()
+            if popup is None:
+                await e.reload_home()
+                continue
+            text, table, pdf = await e._read_print(popup)
+            info = parse_notice_text(text, table)
+            info["notice_number"] = info.get("notice_number") or ext
+            info["_attachments"] = await e._attachments(ext)
+            info["_pdf"], info["_is_new"] = pdf, False
+            await e._close_detail()
+            await human_pause(e.page, 1_500)
             break
-    target = target or (inp.first if await inp.count() else None)
-    if target is None:
-        raise FlowError("PARSE_CHANGED", "case-number input not found")
-    await target.click()
-    await target.fill(case_number)
-    await click_text(e.page, *S.SEARCH_NOTICE_GO, timeout=8_000)
-    await e._wait_list_ready()
-    ids = [c["id"] for c in await e.all_cards()]
-    if not ids:
-        await ctx.job.say(f"برای پرونده {to_fa_digits(case_number)} ابلاغیه‌ای صادر نشده است (یا یافت نشد).")
+        if info:
+            await deliver_notice(ctx, info)
+            await ctx.db.set_run_item(ctx.run_id, ext, "done")
+            ctx.new_items += 1
+        else:
+            failed.append(ext)
+            await ctx.db.set_run_item(ctx.run_id, ext, "failed")
+            await ctx.report("PRINT_FAILED", f"notice {ext} (search) could not be printed")
+    if failed:
+        await ctx.job.say("⚠️ این ابلاغیه‌ها چاپ نشدند و به مدیر گزارش شد: "
+                          + "، ".join(to_fa_digits(x) for x in failed))
+    else:
+        await ctx.job.say(f"✅ {to_fa_digits(len(ids))} ابلاغیه چاپ و ارسال شد.")
+
+
+async def _search_and_print(ctx, br, login, page, *, field: str, value: str, what: str):
+    """جستجوی ابلاغیه‌های صادره براساس شماره پرونده/شماره ابلاغیه (دستور کارفرما):
+
+    ۱) ورود به «ابلاغیه‌های مشاهده شده» (کلیک روی کارت صفحه‌ی اصلی)؛
+    ۲) «جستجوی ابلاغیه» ← مقدار در فیلد مربوطه ← «بازیابی ابلاغیه»؛
+    ۳) خالی بودن → یک بار دیگر «بازیابی ابلاغیه»؛ خطای سامانه → متن خطا برای کاربر؛
+    ۴) همه‌ی ردیف‌ها (صادرکننده + موضوع + تاریخ) برای کاربر ← انتخاب کاربر؛
+    ۵) چاپ موارد انتخابی، مثل روند مشاهده تا چاپ ابلاغیه‌های بازنشده.
+    """
+    e = Eblagh(ctx, br, login, page)
+
+    async def redo() -> list[dict]:
+        return await e.run_search(field, value)
+
+    rows = await redo()
+    if not rows:
+        # دستور کارفرما: یک بار دیگر «بازیابی ابلاغیه»؛ اگر خطای قرمز آمد، متنش برای کاربر
+        await ctx.job.say(T.SEARCH_ONCE_MORE)
+        await e._click_search_go()
+        await e._wait_search_done(set())
+        rows = await e.all_search_rows()
+        if not rows:
+            err = await e._search_error_text()
+            await ctx.job.say(err or T.SEARCH_NOT_FOUND.format(what=what))
+            return
+    await ctx.db.add_run_items(ctx.run_id, [r["id"] for r in rows])
+    chosen = await _ask_which_to_print(ctx, rows, what=what)
+    if not chosen:
+        await ctx.job.say(T.SEARCH_NOTHING_SELECTED)
         return
-    await ctx.db.add_run_items(ctx.run_id, ids)
-    await ctx.job.say(f"🔢 {to_fa_digits(len(ids))} ابلاغیه برای پرونده {to_fa_digits(case_number)} پیدا شد؛ در حال چاپ…")
-    # پس از هر چاپ، جستجو باید دوباره انجام شود؛ ساده‌تر: هر شماره را در «مشاهده شده» پیدا کن
-    await _process_ids(ctx, e, ids, is_new=False, prefer="current")
+    await ctx.job.say(T.SEARCH_PRINTING_SELECTED.format(n=to_fa_digits(len(chosen))))
+    await _print_search_results(ctx, e, chosen, redo=redo)
+
+
+async def work_by_case(ctx, br, login, page, case_number: str):
+    await _search_and_print(ctx, br, login, page, field="case", value=case_number,
+                            what=f"پرونده {to_fa_digits(case_number)}")
+
+
+async def work_by_notice(ctx, br, login, page, notice_number: str):
+    """جستجوی ابلاغیه‌های صادره براساس شماره ابلاغیه — درست مثل شماره پرونده،
+    فقط مقدار در فیلد «شماره ابلاغیه» (ENotifySearchCriteria.NoticedDocNo) می‌رود."""
+    await _search_and_print(ctx, br, login, page, field="notice", value=notice_number,
+                            what=f"شماره ابلاغیه {to_fa_digits(notice_number)}")
 
 
 async def _set_range(e: Eblagh, start: dt.date, end: dt.date):

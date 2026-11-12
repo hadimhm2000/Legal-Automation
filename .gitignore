@@ -19,3 +19,7 @@ browsers/
 .env
 .env.bak_*
 legal-automation-changes.patch
+backup/
+*.patch
+*.bak2
+card_preview.png

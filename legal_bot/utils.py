@@ -82,6 +82,16 @@ def validate_archive_number(raw: str) -> tuple[str | None, str | None]:
     return num, None
 
 
+# ── شماره ابلاغیه ────────────────────────────────────────────────────
+def validate_notice_number(raw: str) -> tuple[str | None, str | None]:
+    """شماره‌ی ابلاغیه در نمونه‌های کارفرما ۱۸ رقم است؛ بازه‌ی ۱۲ تا ۲۰ رقم پذیرفته می‌شود."""
+    num = clean_digits(raw)
+    if 12 <= len(num) <= 20:
+        return num, None
+    return None, (f"شماره ابلاغیه باید ۱۲ تا ۲۰ رقم باشد؛ "
+                  f"شماره‌ی ارسالی شما {to_fa_digits(len(num))} رقم است.")
+
+
 # ── تاریخ ────────────────────────────────────────────────────────────
 def now_tehran() -> dt.datetime:
     return dt.datetime.now(TEHRAN)

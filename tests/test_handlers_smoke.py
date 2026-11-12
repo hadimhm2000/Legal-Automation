@@ -102,12 +102,15 @@ async def test_user_journey(env, db):
     assert any(T.GUIDE_CAPTION == t for t in sess.texts())
     assert await db.get_setting("guide_file_id") == "F1"
     await press(bot, dp, "guide:ack")
-    assert T.PLAN_PROMPT in sess.texts()[-1]
-    await press(bot, dp, "plan:1")
-    await press(bot, dp, button(sess, "شروع تست"))
-    assert T.TERMS_TEXT == sess.texts()[-1]
-    await press(bot, dp, button(sess, "می‌پذیرم"))
-    assert "تست رایگان" in sess.texts()[-1]
+    assert "شروع رایگان" in sess.texts()[-1]           # نمای پلن‌های جدید
+    await press(bot, dp, "plan:free")
+    assert T.PHONE_ASK == sess.texts()[-1]              # شروع رایگان ← تأیید شماره موبایل
+    await send(bot, dp, "09121234567")                  # شماره به‌صورت متن
+    assert T.RULES_TEXT == sess.texts()[-1]             # قوانین بعد از انتخاب پلن (دستور کارفرما)
+    await press(bot, dp, button(sess, "تایید قوانین"))  # تایید ← فعال‌سازی
+    assert "شروع رایگان فعال شد" in sess.texts()[-1]
+    s = await db.one("SELECT * FROM subscriptions WHERE bale_id=?", (ADMIN,))
+    assert s["status"] == "FREE_ACTIVE" and s["inquiries_left"] == 2 and s["phone"] == "09121234567"
 
     # ابلاغیه ← جستجو با شماره پرونده: اعتبارسنجی پیش از لمس سایت
     await send(bot, dp, T.M_NOTICES)
@@ -126,6 +129,32 @@ async def test_user_journey(env, db):
     run = await db.one("SELECT * FROM check_runs ORDER BY id DESC LIMIT 1")
     assert run["status"] == "cancelled" and run["kind"] == "notices_case"
 
+    # ابلاغیه ← جستجو با شماره ابلاغیه (گزینه‌ی جدید — دستور کارفرما)
+    await send(bot, dp, T.M_NOTICES)
+
+    def reply_kb_has(text_part):
+        for m in sess.calls:
+            rm = getattr(m, "reply_markup", None)
+            if rm is not None and hasattr(rm, "keyboard"):
+                for row in rm.keyboard:
+                    for b in row:
+                        if b and text_part in (b.text or ""):
+                            return True
+        return False
+
+    assert reply_kb_has(T.N_BY_NOTICE)                  # در منوی ابلاغیه‌ها دیده می‌شود
+    await send(bot, dp, T.N_BY_NOTICE)
+    assert T.ASK_NOTICE_NUMBER in sess.texts()[-1]
+    await send(bot, dp, "12345")                         # کوتاه → خطای اعتبارسنجی
+    assert "۱۲ تا ۲۰ رقم" in sess.texts()[-1]
+    await send(bot, dp, "9910103593004809")              # معتبر ← رضایت داده‌ها
+    assert T.CONSENT_TEXT == sess.texts()[-1]
+    await send(bot, dp, T.BACK)
+    await asyncio.sleep(0.1)
+    assert T.CANCELLED in sess.texts()
+    run = await db.one("SELECT * FROM check_runs ORDER BY id DESC LIMIT 1")
+    assert run["status"] == "cancelled" and run["kind"] == "notices_notice"
+
     # رمز ارسالی خارج از جریان ← حذف + هشدار
     await send(bot, dp, "4420160616")
     assert any(type(c).__name__ == "DeleteMessage" for c in sess.calls)
@@ -140,12 +169,95 @@ async def test_turn_invoice_and_admin_approval(env, db):
     await send(bot, dp, "0500732")
     inv = await db.one("SELECT * FROM invoices WHERE kind='turn'")
     assert inv["amount_toman"] == 70_000 and inv["payload"] == "archive:0500732"
+    for _ in range(100):  # ساخت تصویر کارت چند ثانیه طول می‌کشد
+        if any(inv["code"] in (t or "") for t in sess.texts()):
+            break
+        await asyncio.sleep(0.1)
     assert any(inv["code"] in (t or "") for t in sess.texts())   # فاکتور + منوی اصلی خودکار بعد از پایان Job
     await db.execute("UPDATE invoices SET status='receipt_sent' WHERE code=?", (inv["code"],))
     await press(bot, dp, f"adm:ok:{inv['code']}")
     assert button(sess, "شروع ثبت نوبت") == f"turn:go:{inv['code']}"
     await press(bot, dp, f"adm:ok:{inv['code']}")       # تأیید دوباره بی‌اثر
     assert (await db.one("SELECT status FROM invoices WHERE code=?", (inv["code"],)))["status"] == "approved"
+
+
+async def send_photo(bot, dp, file_id, fuid):
+    from aiogram.types import PhotoSize
+
+    m = Message(message_id=next(_uid), date=dt.datetime.now(), chat=Chat(id=ADMIN, type="private"),
+                from_user=user,
+                photo=[PhotoSize(file_id=file_id, file_unique_id=fuid, width=800, height=600)])
+    await dp.feed_update(bot, Update(update_id=next(_uid), message=m))
+    await asyncio.sleep(0.05)
+
+
+async def test_card_to_card_payment_flow(env, db):
+    """جریان کامل کارت‌به‌کارت (مثل ربات اصلی): قوانین ← فاکتور + دکمه‌های کپی ←
+    رسید ← کسری ← رسید باقی‌مانده ← تایید مدیر ← فعال شدن پلن."""
+    bot, dp, sess = env
+    await send(bot, dp, f"/start {make_token(ADMIN, 'hs')}")
+    await press(bot, dp, "guide:ack")
+    await press(bot, dp, "plan:base")                     # پلن شخصی پایه
+    assert T.RULES_TEXT == sess.texts()[-1]               # قوانین بعد از انتخاب پلن
+    await press(bot, dp, button(sess, "تایید قوانین"))    # تایید ← فاکتور
+    inv = await db.one("SELECT * FROM invoices WHERE kind='new'")
+    assert inv["plan"] == "base" and inv["amount_toman"] == config.PLAN_BASE_PRICE
+    # دکمه‌های کارت‌به‌کارت روی فاکتور هستند
+    assert button(sess, "کپی شماره کارت") == f"cpay:cc:{inv['code']}"
+    assert button(sess, "کپی مبلغ") == f"cpay:ca:{inv['code']}"
+    assert button(sess, "ارسال تصویر رسید") == f"cpay:up:{inv['code']}"
+    # عکس بدون زدن دکمه‌ی «ارسال تصویر رسید» ← راهنمایی (نه رسید)
+    await send_photo(bot, dp, "P1", "U-P1")
+    assert "ابتدا" in sess.texts()[-1]
+    assert (await db.one("SELECT status FROM invoices WHERE code=?", (inv["code"],)))["status"] == "pending"
+    # زدن دکمه ← مجوز ۱۵ دقیقه‌ای ← عکس رسید ← رفتن به مدیر
+    await press(bot, dp, f"cpay:up:{inv['code']}")
+    await send_photo(bot, dp, "P1", "U-P1")
+    row = await db.one("SELECT * FROM invoices WHERE code=?", (inv["code"],))
+    assert row["status"] == "receipt_sent" and row["receipt_file_unique_id"] == "U-P1"
+    assert any("رسید کارت‌به‌کارت" in (t or "") for t in sess.texts())
+    assert button(sess, "کسری") == f"adm:sf:{inv['code']}"
+    # عکس تکراری: دکمه‌ی ارسال رسید در حال بررسی مجوز نمی‌دهد
+    await press(bot, dp, f"cpay:up:{inv['code']}")
+    ans = [c for c in sess.calls if type(c).__name__ == "AnswerCallbackQuery"][-1]
+    assert "در حال بررسی" in ans.text
+    await send_photo(bot, dp, "P2", "U-P1")
+    assert "ابتدا" in sess.texts()[-1]
+    # مدیر کسری اعلام می‌کند ← کاربر فقط باقی‌مانده را می‌پردازد
+    await press(bot, dp, f"adm:sf:{inv['code']}")
+    await send(bot, dp, "50000")
+    row = await db.one("SELECT * FROM invoices WHERE code=?", (inv["code"],))
+    assert row["status"] == "shortfall_wait" and row["shortfall_toman"] == 50_000
+    assert any("کمتر از مبلغ فاکتور" in (t or "") for t in sess.texts())
+    # رسید باقی‌مانده ← تایید نهایی مدیر ← پلن فعال
+    await press(bot, dp, f"cpay:up:{inv['code']}")
+    await send_photo(bot, dp, "P3", "U-P3")
+    row = await db.one("SELECT * FROM invoices WHERE code=?", (inv["code"],))
+    assert row["status"] == "receipt_sent" and row["shortfall_receipt_file_unique_id"] == "U-P3"
+    await press(bot, dp, f"adm:ok:{inv['code']}")
+    s = await db.one("SELECT * FROM subscriptions WHERE bale_id=?", (ADMIN,))
+    assert s["status"] == "PAID_ACTIVE" and s["inquiries_left"] == config.PLAN_BASE_INQUIRIES
+    assert any("پلن پایه" in (t or "") for t in sess.texts())
+
+
+async def test_card_payment_reject_with_reason(env, db):
+    bot, dp, sess = env
+    await send(bot, dp, f"/start {make_token(ADMIN, 'hs')}")
+    await press(bot, dp, "guide:ack")
+    await press(bot, dp, "plan:select")
+    await press(bot, dp, button(sess, "تایید قوانین"))
+    inv = await db.one("SELECT * FROM invoices WHERE kind='new'")
+    await press(bot, dp, f"cpay:up:{inv['code']}")
+    await send_photo(bot, dp, "P9", "U-P9")
+    # مدیر ← منوی دلایل رد ← دلیل آماده
+    await press(bot, dp, f"adm:no:{inv['code']}")
+    assert button(sess, "مطابقت ندارد") == f"adm:rr:{inv['code']}:amt"
+    await press(bot, dp, f"adm:rr:{inv['code']}:amt")
+    row = await db.one("SELECT * FROM invoices WHERE code=?", (inv["code"],))
+    assert row["status"] == "pending" and row["receipt_file_unique_id"] is None
+    assert any("تایید نشد" in (t or "") for t in sess.texts())
+    # دکمه‌ی «ارسال تصویر رسید» دوباره در دسترس است
+    assert button(sess, "ارسال تصویر رسید") == f"cpay:up:{inv['code']}"
 
 
 async def test_admin_commands_and_permissions(env, db, monkeypatch):

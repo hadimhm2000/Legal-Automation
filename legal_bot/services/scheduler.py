@@ -1,5 +1,6 @@
-"""زمان‌بندی (ساعت تهران): پیام بررسی ابلاغیه ۸ و ۱۸، بررسی روزانه‌ی پرونده‌ها ۸، یادآوری‌ها،
-یادآوری پایان تست / قفل / فاکتور تمدید. هر کار در روز فقط یک بار (کلید در جدول settings)."""
+"""زمان‌بندی (ساعت تهران): پیام بررسی ابلاغیه ۸ و ۱۸ (فقط پلن‌های حرفه‌ای — پیگیری خودکار)،
+بررسی روزانه‌ی پرونده‌ها ۸، یادآوری‌ها، هشدار تمدید / قفل / فاکتور منقضی.
+هر کار در روز فقط یک بار (کلید در جدول settings)."""
 from __future__ import annotations
 
 import asyncio
@@ -8,7 +9,7 @@ import logging
 
 from .. import config, keyboards as K
 from ..db import parse_iso
-from ..utils import now_tehran
+from ..utils import fa_date, now_tehran, to_fa_digits
 from . import reminders, subscription as sub
 
 log = logging.getLogger(__name__)
@@ -23,7 +24,16 @@ async def _once(db, key: str) -> bool:
 
 async def _active_users(db):
     return await db.all("SELECT u.bale_id, u.chat_id FROM users u JOIN subscriptions s ON s.bale_id=u.bale_id "
-                        "WHERE s.status IN ('TRIAL_ACTIVE','PAID_ACTIVE')")
+                        "WHERE s.status IN ('FREE_ACTIVE','PAID_ACTIVE')")
+
+
+async def _auto_tracking_users(db):
+    """پیگیری خودکار روزانه فقط برای پلن‌های حرفه‌ایِ فعال (پیشرو/تخصصی/سازمانی)."""
+    out = []
+    for u in await _active_users(db):
+        if await sub.has_auto_tracking(db, u["bale_id"]):
+            out.append(u)
+    return out
 
 
 def _gap(n: int) -> float:
@@ -33,8 +43,8 @@ def _gap(n: int) -> float:
 
 async def notices_prompt(bot, db, slot: str):
     targets = []
-    for u in await _active_users(db):
-        if await db.is_beta(u["bale_id"]) and await sub.has_service(db, u["bale_id"], "notices"):
+    for u in await _auto_tracking_users(db):
+        if await db.is_beta(u["bale_id"]):
             targets.append(u)
     gap = _gap(len(targets))
     for i, u in enumerate(targets):
@@ -50,11 +60,10 @@ async def notices_prompt(bot, db, slot: str):
 
 async def tracking_prompt(bot, db):
     targets = []
-    for u in await _active_users(db):
-        if await sub.has_service(db, u["bale_id"], "case_alerts"):
-            n = len(await db.tracked(u["bale_id"]) or [])
-            if n:
-                targets.append((u, n))
+    for u in await _auto_tracking_users(db):
+        n = len(await db.tracked(u["bale_id"]) or [])
+        if n:
+            targets.append((u, n))
     gap = _gap(len(targets))
     # نیم‌گام جابه‌جا تا با پیام‌های ابلاغیه‌ی همان ساعت ۸ هم‌زمان نشود
     await asyncio.sleep(gap / 2 if len(targets) > 1 else 0)
@@ -71,18 +80,15 @@ async def tracking_prompt(bot, db):
 
 async def subscription_tick(bot, db):
     now = dt.datetime.now(dt.timezone.utc)
-    for s in await db.all("SELECT * FROM subscriptions WHERE status IN ('TRIAL_ACTIVE','PAID_ACTIVE')"):
+    for s in await db.all("SELECT * FROM subscriptions WHERE status IN ('FREE_ACTIVE','PAID_ACTIVE')"):
         u = await db.get_user(s["bale_id"])
         if not u:
             continue
-        end = parse_iso(s["trial_ends_at"] if s["status"] == "TRIAL_ACTIVE" else s["paid_until"])
-        if not end:
-            continue
-        left_h = (end - now).total_seconds() / 3600
+        # ── قاعده ۸: هشدار تمدید چند روز قبل از پایان (فقط پلن‌های حرفه‌ای) ──
+        end = parse_iso(s["paid_until"]) if s["status"] == "PAID_ACTIVE" else None
+        left_h = (end - now).total_seconds() / 3600 if end else None
         tag = None
-        if s["status"] == "TRIAL_ACTIVE":
-            tag = "24h" if 6 < left_h <= 24 else ("6h" if 0 < left_h <= 6 else None)
-        else:
+        if left_h is not None:
             if 0 < left_h <= 24:
                 tag = "0d"
             elif 24 < left_h <= 48:
@@ -92,27 +98,39 @@ async def subscription_tick(bot, db):
         if tag and s["last_reminder"] != f"{end.date()}:{tag}":
             await db.execute("UPDATE subscriptions SET last_reminder=? WHERE bale_id=?",
                              (f"{end.date()}:{tag}", s["bale_id"]))
-            if s["status"] == "TRIAL_ACTIVE":
-                text = "⏳ تست رایگان شما رو به پایان است. برای ادامه، یکی از سرویس‌ها را فعال کنید."
-                kb = K.plans_kb()
-            else:
-                text = "⏳ اشتراک شما رو به پایان است؛ برای تمدید فاکتور جدید صادر کنید (روزهای باقی‌مانده از دست نمی‌رود)."
-                kb = K.inline([[("🔁 تمدید یک‌ماهه", "inv:renew:0")]])
+            title = sub.plan_title(s["plan"])
             try:
-                await bot.send_message(u["chat_id"], text, reply_markup=kb)
+                await bot.send_message(
+                    u["chat_id"],
+                    f"⏳ اشتراک «{title}» شما رو به پایان است (پایان: {fa_date(end.date())}).\n"
+                    "برای تمدید، فاکتور جدید صادر کنید؛ روزهای باقی‌مانده از دست نمی‌رود و پرونده‌های ثبت‌شده "
+                    f"تا {to_fa_digits(config.SUB_GRACE_DAYS)} روز بعد از انقضا نگه داشته می‌شوند.",
+                    reply_markup=K.inline([[(f"🔁 تمدید {title}", f"plan:{s['plan']}")]]))
             except Exception:
                 pass
-        if left_h <= 0:
-            await sub.refresh(db, s)
+        # ── قفل/تنزل خودکار + پیام ──
+        s2 = await sub.refresh(db, s)
+        if s2["status"] == "LOCKED" and s["status"] != "LOCKED":
             try:
-                await bot.send_message(u["chat_id"], "🔒 دوره‌ی شما تمام شد و سرویس قفل شد. کدام مورد را فعال کنیم؟",
+                await bot.send_message(u["chat_id"],
+                                       "🔒 دوره‌ی شما تمام شد و سرویس قفل شد. برای ادامه، یکی از پلن‌ها را فعال کنید:",
                                        reply_markup=K.plans_kb())
             except Exception:
                 pass
+        elif s2["status"] == "PAID_ACTIVE" and not s2["plan"] and s["plan"]:
+            try:
+                await bot.send_message(
+                    u["chat_id"],
+                    "ℹ️ دوره‌ی اشتراک حرفه‌ای شما پایان یافت. اعتبار استعلام باقی‌مانده‌ی شما همچنان قابل "
+                    "استفاده است؛ برای پیگیری خودکار روزانه، دوباره یکی از پلن‌های حرفه‌ای را فعال کنید.",
+                    reply_markup=K.plans_kb())
+            except Exception:
+                pass
     # فاکتورهای منقضی
-    await db.execute("UPDATE invoices SET status='expired' WHERE status='pending' AND expires_at<?", (now.isoformat(),))
-    # پاک‌سازی داده‌های کاربران قفل‌شده بعد از ۳۰ روز
-    cutoff = (now - dt.timedelta(days=30)).isoformat()
+    await db.execute("UPDATE invoices SET status='expired' WHERE status IN ('pending','shortfall_wait') "
+                     "AND expires_at<?", (now.isoformat(),))
+    # قاعده ۸: پاک‌سازی داده‌های کاربران قفل‌شده چند روز بعد از انقضا (نه ۳۰ روز)
+    cutoff = (now - dt.timedelta(days=config.SUB_GRACE_DAYS)).isoformat()
     for s in await db.all("SELECT bale_id FROM subscriptions WHERE status='LOCKED' AND locked_at<?", (cutoff,)):
         await db.wipe_user_data(s["bale_id"])
 

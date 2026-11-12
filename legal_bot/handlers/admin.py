@@ -36,7 +36,59 @@ async def user(message: Message, command: CommandObject, db):
     u = await db.get_user(uid)
     s = await db.one("SELECT * FROM subscriptions WHERE bale_id=?", (uid,))
     n = await db.one("SELECT COUNT(*) c FROM notices WHERE bale_id=?", (uid,))
-    await message.answer(f"user={u}\nsub={s}\nnotices={n['c'] if n else 0}")
+    from ..services import subscription as sub
+
+    lines = [f"user={u}"]
+    if s:
+        m = sub.plan_meta(s["plan"])
+        lines.append(
+            f"status={s['status']} plan={s['plan'] or '-'}"
+            + (f" ({m.get('title')})" if m else "")
+            + f" cycle={s['cycle'] or '-'}")
+        lines.append(f"inquiries_left={s['inquiries_left']} quota={s['quota_used']}/{s['quota_total']} "
+                     f"month={s['quota_month'] or '-'} free_used={s['free_used']} phone={s['phone'] or '-'}")
+        lines.append(f"paid_until={s['paid_until']} restricted_until={s['restricted_until']} "
+                     f"reason={s['restriction_reason'] or '-'}")
+    lines.append(f"notices={n['c'] if n else 0}")
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("legal_restrict"))
+async def restrict_cmd(message: Message, command: CommandObject, db):
+    """قاعده ۶: محدودسازی موقت کاربر — /legal_restrict <id> <ساعت> [دلیل]"""
+    args = (command.args or "").split()
+    if len(args) < 2 or not args[0].isdigit() or not args[1].isdigit():
+        await message.answer("/legal_restrict <id> <hours> [دلیل]")
+        return
+    uid, hours = int(args[0]), int(args[1])
+    reason = " ".join(args[2:]) or "محدودسازی توسط مدیر (قاعده ۶)"
+    from ..services import subscription as sub
+
+    await sub.restrict(db, uid, hours, reason)
+    await sub.report_violation(message.bot, db, uid, "محدودسازی دستی توسط مدیر", reason)
+    await message.answer(f"✅ کاربر {uid} برای {hours} ساعت محدود شد.\nدلیل: {reason}")
+
+
+@router.message(Command("legal_unrestrict"))
+async def unrestrict_cmd(message: Message, command: CommandObject, db):
+    if not (command.args or "").strip().isdigit():
+        await message.answer("/legal_unrestrict <id>")
+        return
+    from ..services import subscription as sub
+
+    await sub.unrestrict(db, int(command.args))
+    await message.answer(f"✅ محدودیت کاربر {command.args} برداشته شد.")
+
+
+@router.message(Command("legal_events"))
+async def events_cmd(message: Message, command: CommandObject, db):
+    """رویدادهای پلن یک کاربر — تخلف‌ها، فعال‌سازی‌ها، مصرف سهمیه."""
+    if not (command.args or "").strip().isdigit():
+        await message.answer("/legal_events <id>")
+        return
+    rows = await db.all("SELECT * FROM plan_events WHERE bale_id=? ORDER BY id DESC LIMIT 20", (int(command.args),))
+    await message.answer("\n".join(f"#{r['id']} {r['event']} {r['plan'] or ''} {r['created_at'][5:16]} "
+                                   f"{r['detail'] or ''}" for r in rows) or "-")
 
 
 @router.message(Command("legal_allow"))
@@ -99,10 +151,13 @@ async def help_(message: Message):
         "🛠 دستورات مدیر\n"
         "/legal_runs — ۱۵ بررسی آخر (نوع، کاربر، وضعیت، آخرین مرحله، خطا)\n"
         "/legal_errors — ۱۵ خطای آخر\n"
-        "/legal_user <id> — اشتراک و تعداد ابلاغیه‌های یک کاربر\n"
+        "/legal_user <id> — پلن، سهمیه و وضعیت یک کاربر\n"
+        "/legal_events <id> — رویدادهای پلن کاربر (تخلف، فعال‌سازی، مصرف)\n"
+        "/legal_restrict <id> <hours> [دلیل] — محدودیت موقت (قاعده ۶)\n"
+        "/legal_unrestrict <id> — برداشتن محدودیت\n"
         "/legal_allow <id> — افزودن به فهرست بتا (در ربات اصلی هم LEGAL_BETA_IDS لازم است)\n"
         "/legal_deny <id> — حذف از فهرست بتا\n"
         "/legal_guide — جایگزینی PDF راهنما (بعد از دستور، فایل را بفرستید)\n"
         "/legal_tick — ارسال دستی یادآوری‌های امروز\n"
         "/legal_load — بار سرور: کارهای هم‌زمان، صف و رم آزاد\n"
-        "تأیید/رد رسیدها با دکمه‌های زیر هر رسید انجام می‌شود.")
+        "تایید/رد/کسری رسیدها با دکمه‌های زیر هر رسید انجام می‌شود؛ گزارش تخلف‌ها خودکار ارسال می‌شود.")

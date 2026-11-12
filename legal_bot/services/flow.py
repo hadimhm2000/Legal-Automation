@@ -6,7 +6,7 @@ import contextlib
 import logging
 
 from .. import config, texts as T
-from . import error_reporter
+from . import error_reporter, subscription as sub
 from .browser import Browser
 from .sana_login import SanaLogin, collect_credentials
 from .session import FlowError, Job, JobCancelled, UserTimeout, vault
@@ -102,6 +102,15 @@ async def run_with_browser(ctx: RunCtx, target: str, work, *, consent=True):
             await work(ctx, br, login, page)
             await ctx.step("L12")
         await ctx.db.finish_run(ctx.run_id, "done", new_items=ctx.new_items)
+        # قاعده ۱: هر استعلامِ موفقِ دستی یک‌بار از سهمیه کم می‌شود؛
+        # پیگیری خودکار زمان‌بندی‌شده سهمیه ندارد (قاعده ۲).
+        if ctx.trigger == "manual" and ctx.kind in sub.INQUIRY_KINDS:
+            try:
+                note = await sub.after_inquiry(ctx.db, job.user_id, job.bot)
+                if note:
+                    await job.say(note)
+            except Exception:
+                log.exception("quota consume failed")
     except JobCancelled:
         await ctx.db.finish_run(ctx.run_id, "cancelled", "CANCELLED")
         await job.say(T.CANCELLED)

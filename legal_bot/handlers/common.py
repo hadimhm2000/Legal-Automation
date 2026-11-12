@@ -4,7 +4,6 @@ from aiogram import BaseMiddleware, Bot
 from aiogram.types import CallbackQuery, FSInputFile, Message
 
 from .. import config, keyboards as K, texts as T
-from ..db import now_iso
 from ..services import subscription as sub
 from ..services.flow import RunCtx, run_with_browser
 from ..services.session import Job, jobs
@@ -50,7 +49,8 @@ async def show_main(message_or_chat, bot: Bot | None = None, text="منوی اص
 
 
 async def show_plans(bot: Bot, chat_id: int, prefix=""):
-    await bot.send_message(chat_id, (prefix + "\n\n" if prefix else "") + T.PLAN_PROMPT, reply_markup=K.plans_kb())
+    await bot.send_message(chat_id, (prefix + "\n\n" if prefix else "") + T.PLANS_OVERVIEW,
+                           reply_markup=K.plans_kb())
 
 
 async def require_service(message: Message, db, service: str) -> bool:
@@ -60,6 +60,50 @@ async def require_service(message: Message, db, service: str) -> bool:
     why = "🔒 اشتراک شما قفل است." if s["status"] == "LOCKED" else "این سرویس برای شما فعال نیست."
     await show_plans(message.bot, message.chat.id, why)
     return False
+
+
+async def inquiry_gate(bot: Bot, db, uid: int, chat_id: int) -> bool:
+    """گیت استعلام دستی: پلن فعال + سهمیه باقی‌مانده + عدم محدودیت (قواعد ۳، ۴ و ۶)."""
+    from ..db import parse_iso
+
+    from ..utils import fa_date
+
+    s = await sub.get(db, uid)
+    if s["status"] not in sub.ACTIVE:
+        await show_plans(bot, chat_id, "🔒 پلن فعالی ندارید. برای استفاده از این بخش، یکی از پلن‌ها را فعال کنید:")
+        return False
+    ok, why = await sub.can_inquiry(db, uid, bot)
+    if ok:
+        return True
+    if why == "exhausted":
+        await show_plans(bot, chat_id, T.QUOTA_EXHAUSTED)
+    elif why == "quota_done":
+        await show_plans(bot, chat_id, T.QUOTA_DONE)
+    elif why == "daily_cap":
+        await bot.send_message(chat_id, T.DAILY_CAP_REACHED, reply_markup=K.main_menu())
+    elif why == "restricted":
+        until = parse_iso(s.get("restricted_until"))
+        await bot.send_message(chat_id, T.restricted_until_text(fa_date(until.date()) if until else "-"),
+                               reply_markup=K.main_menu())
+    else:
+        await show_plans(bot, chat_id, "برای استفاده از این بخش، یکی از پلن‌ها را فعال کنید:")
+    return False
+
+
+async def require_inquiry(message: Message, db) -> bool:
+    if not await require_service(message, db, "notices"):
+        return False
+    return await inquiry_gate(message.bot, db, message.from_user.id, message.chat.id)
+
+
+async def require_inquiry_cb(cb: CallbackQuery, db) -> bool:
+    """نسخه‌ی دکمه‌ای گیت استعلام (پیام‌های زمان‌بندی‌شده/دکمه‌ها)."""
+    if not await sub.has_service(db, cb.from_user.id, "notices"):
+        s = await sub.get(db, cb.from_user.id)
+        why = "🔒 پلن شما قفل است." if s["status"] == "LOCKED" else "🔒 پلن فعالی ندارید."
+        await show_plans(cb.bot, cb.message.chat.id, why)
+        return False
+    return await inquiry_gate(cb.bot, db, cb.from_user.id, cb.message.chat.id)
 
 
 def start_job(message_or_cb, db, kind: str, coro) -> bool:
@@ -94,15 +138,6 @@ def browser_job(db, kind, target, work, *, pre=None, trigger="manual", consent=T
         await run_with_browser(ctx, target, w, consent=consent)
 
     return coro
-
-
-async def ack_terms_needed(db, uid) -> bool:
-    u = await db.get_user(uid)
-    return not (u and u.get("terms_ack_at"))
-
-
-async def set_terms(db, uid):
-    await db.execute("UPDATE users SET terms_ack_at=?, terms_version=1 WHERE bale_id=?", (now_iso(), uid))
 
 
 async def safe_answer(cb: CallbackQuery, text: str | None = None, alert=False):

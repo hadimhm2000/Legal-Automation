@@ -9,8 +9,8 @@ from .. import config, keyboards as K, texts as T
 from ..services import eblagh, reports
 from ..services.reminders import done_kb, reminder_text
 from ..services.session import Job, JobCancelled, UserTimeout, jobs
-from ..utils import fa_date, parse_jalali, to_fa_digits, today_tehran, validate_case_number
-from .common import browser_job, require_service, safe_answer, start_job
+from ..utils import fa_date, parse_jalali, to_fa_digits, today_tehran, validate_case_number, validate_notice_number
+from .common import browser_job, require_inquiry, require_inquiry_cb, require_service, safe_answer, start_job
 
 router = Router(name="notices")
 
@@ -41,7 +41,7 @@ async def start_new_check(message_or_cb, db, trigger="manual"):
 
 @router.message(F.text == T.N_CHECK)
 async def check_new(message: Message, db):
-    if await _busy(message) or not await require_service(message, db, "notices"):
+    if await _busy(message) or not await require_inquiry(message, db):
         return
     await start_new_check(message, db)
 
@@ -54,11 +54,17 @@ async def check_from_prompt(cb: CallbackQuery, db):
     if jobs.busy(cb.from_user.id):
         await cb.message.answer(T.JOB_BUSY)
         return
-    if not await sub.has_service(db, cb.from_user.id, "notices"):
+    trigger = cb.data.split(":")[2]
+    if trigger == "manual" or not await sub.has_auto_tracking(db, cb.from_user.id):
+        # استعلام دستی ← گیت سهمیه؛ دکمه‌ی زمان‌بندی‌شده‌ی قدیمی هم مثل دستی رفتار می‌شود
+        if not await require_inquiry_cb(cb, db):
+            return
+        trigger = "manual"
+    elif not await sub.has_service(db, cb.from_user.id, "notices"):
         await cb.message.answer("🔒 سرویس ابلاغیه برای شما فعال نیست.")
         return
     await cb.message.edit_reply_markup(reply_markup=None)
-    await start_new_check(cb, db, trigger=cb.data.split(":")[2])
+    await start_new_check(cb, db, trigger=trigger)
 
 
 @router.callback_query(F.data == "chk:skip")
@@ -69,7 +75,7 @@ async def skip(cb: CallbackQuery):
 
 @router.message(F.text == T.N_BY_CASE)
 async def by_case(message: Message, db):
-    if await _busy(message) or not await require_service(message, db, "notices"):
+    if await _busy(message) or not await require_inquiry(message, db):
         return
 
     async def pre(job: Job):
@@ -80,6 +86,21 @@ async def by_case(message: Message, db):
               browser_job(db, "notices_case", "eblagh", eblagh.work_by_case, pre=pre))
 
 
+@router.message(F.text == T.N_BY_NOTICE)
+async def by_notice(message: Message, db):
+    """جستجوی ابلاغیه‌های صادره براساس شماره ابلاغیه (دستور کارفرما — فایل آبان ۱۴۰۵):
+    درست مثل جستجو با شماره پرونده، فقط مقدار در فیلد «شماره ابلاغیه» می‌رود."""
+    if await _busy(message) or not await require_inquiry(message, db):
+        return
+
+    async def pre(job: Job):
+        num = await job.ask_text(T.ASK_NOTICE_NUMBER, validate_notice_number)
+        return {"notice_number": num}
+
+    start_job(message, db, "notices_notice",
+              browser_job(db, "notices_notice", "eblagh", eblagh.work_by_notice, pre=pre))
+
+
 def _date_validator(v):
     d = parse_jalali(v)
     return (d, None) if d else (None, T.BAD_DATE)
@@ -87,7 +108,7 @@ def _date_validator(v):
 
 @router.message(F.text == T.N_BY_RANGE)
 async def by_range(message: Message, db):
-    if await _busy(message) or not await require_service(message, db, "notices"):
+    if await _busy(message) or not await require_inquiry(message, db):
         return
 
     async def pre(job: Job):

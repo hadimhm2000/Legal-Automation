@@ -49,15 +49,42 @@ LOG_DIR = os.environ.get("LOG_DIR", str(BASE_DIR / "logs"))
 CARD_NUMBER = os.environ.get("CARD_NUMBER", "")
 CARD_HOLDER = os.environ.get("CARD_HOLDER", "")
 CARD_BANK = os.environ.get("CARD_BANK", "")
+CARD_PAY_BRAND = os.environ.get("CARD_PAY_BRAND", "اتوماسیون ویژه خدمات حقوقی")
 INVOICE_EXPIRE_HOURS = _int("INVOICE_EXPIRE_HOURS", 48)
 TEST_PRICE_TOMAN = _int("TEST_PRICE_TOMAN", 0)  # فقط برای مدیر؛ 0 = غیرفعال
+ADMIN_FREE = _int("ADMIN_FREE", 0)   # 1 = ???? ?????? ? ???????
 
-TRIAL_DAYS = _int("TRIAL_DAYS", 3)
-PRICE_NOTICES = _int("PRICE_NOTICES", 500_000)
-PRICE_CASE_ALERTS = _int("PRICE_CASE_ALERTS", 500_000)
-PRICE_BOTH = _int("PRICE_BOTH", 800_000)
+TRIAL_DAYS = _int("TRIAL_DAYS", 3)  # قدیمی — فقط برای سازگاری؛ مدل جدید «شروع رایگان» است
+
+# ── پلن‌های درآمدی جدید (دستور کارفرما — آبان ۱۴۰۵) ──
+FREE_INQUIRIES = _int("FREE_INQUIRIES", 2)                 # شروع رایگان: ۲ استعلام برای هر دو بخش
+PLAN_BASE_INQUIRIES = _int("PLAN_BASE_INQUIRIES", 10)    # پلن پایه: اعتبار ۱۰ استعلامی
+PLAN_BASE_PRICE = _int("PLAN_BASE_PRICE", 600_000)
+PLAN_SELECT_INQUIRIES = _int("PLAN_SELECT_INQUIRIES", 20)   # پلن برگزیده: اعتبار ۲۰ استعلامی
+PLAN_SELECT_PRICE = _int("PLAN_SELECT_PRICE", 1_050_000)
+PLAN_PRO_QUOTA = _int("PLAN_PRO_QUOTA", 30)              # پلن پیشرو: ۳۰ استعلام در ماه
+PLAN_PRO_CASES = _int("PLAN_PRO_CASES", 10)              # پیگیری خودکار تا ۱۰ پرونده
+PLAN_PRO_MONTHLY = _int("PLAN_PRO_MONTHLY", 2_400_000)
+PLAN_PRO_QUARTERLY = _int("PLAN_PRO_QUARTERLY", 6_480_000)
+PLAN_EXPERT_QUOTA = _int("PLAN_EXPERT_QUOTA", 60)        # پلن تخصصی: ۶۰ استعلام در ماه
+PLAN_EXPERT_CASES = _int("PLAN_EXPERT_CASES", 30)
+PLAN_EXPERT_MONTHLY = _int("PLAN_EXPERT_MONTHLY", 4_000_000)
+PLAN_EXPERT_QUARTERLY = _int("PLAN_EXPERT_QUARTERLY", 10_800_000)
+PLAN_ORG_QUOTA = _int("PLAN_ORG_QUOTA", 0)               # پلن سازمانی: نامحدود (استفاده منصفانه)
+PLAN_ORG_CASES = _int("PLAN_ORG_CASES", 100)
+PLAN_ORG_MONTHLY = _int("PLAN_ORG_MONTHLY", 7_000_000)
+PLAN_ORG_QUARTERLY = _int("PLAN_ORG_QUARTERLY", 18_900_000)
+PLAN_ORG_DAILY_CAP = _int("PLAN_ORG_DAILY_CAP", 50)      # قاعده ۴: سقف روزانه ۵۰ استعلام دستی سازمانی
+
+RECEIPT_ARM_SECONDS = _int("RECEIPT_ARM_SECONDS", 900)   # اعتبار دکمه‌ی «ارسال تصویر رسید» (۱۵ دقیقه)
 PRICE_TURN = _int("PRICE_TURN", 70_000)  # هر درخواست ثبت نوبت قضائی
-SUB_DAYS = _int("SUB_DAYS", 30)
+SUB_DAYS = _int("SUB_DAYS", 30)          # دوره‌ی ماهانه
+QUARTERLY_DAYS = _int("QUARTERLY_DAYS", 90)  # دوره‌ی ۳ ماهه
+SUB_GRACE_DAYS = _int("SUB_GRACE_DAYS", 7)    # قاعده ۸: نگه‌داشتن پرونده‌ها چند روز بعد از انقضا
+
+# ── قاعده ۶: مصرف غیرعادی ← محدودیت موقت + گزارش به مدیر ──
+ABUSE_MANUAL_PER_HOUR = _int("ABUSE_MANUAL_PER_HOUR", 15)  # بیش از این تعداد استعلام دستی در ۱ ساعت
+RESTRICT_HOURS = _int("RESTRICT_HOURS", 24)                 # مدت محدودیت موقت (ساعت)
 
 TZ = "Asia/Tehran"
 CHECK_TIMES = [t.strip() for t in os.environ.get("CHECK_TIMES", "08:00,18:00").split(",") if t.strip()]

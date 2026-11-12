@@ -18,7 +18,8 @@ def main_menu():
 
 
 def notices_menu():
-    return reply([[T.N_CHECK], [T.N_BY_CASE], [T.N_BY_RANGE], [T.N_REPORTS], [T.BACK, T.M_CANCEL]])
+    return reply([[T.N_CHECK], [T.N_BY_CASE], [T.N_BY_NOTICE], [T.N_BY_RANGE], [T.N_REPORTS],
+                  [T.BACK, T.M_CANCEL]])
 
 
 def reports_menu():
@@ -40,4 +41,20 @@ def guide_kb():
 
 
 def plans_kb():
-    return inline([[(T.PLAN_1, "plan:1")], [(T.PLAN_2, "plan:2")], [(T.PLAN_3, "plan:3")], [(T.BACK, "nav:main")]])
+    """پلن‌های نهایی ربات (آبان ۱۴۰۵)."""
+    return inline([
+        [("🎁 شروع رایگان (۲ استعلام)", "plan:free")],
+        [("👤 پلن پایه — ۱۰ استعلام", "plan:base")],
+        [("👤 پلن برگزیده — ۲۰ استعلام", "plan:select")],
+        [("⚖️ پلن پیشرو — ۳۰ استعلام/ماه", "plan:pro")],
+        [("⚖️ پلن تخصصی — ۶۰ استعلام/ماه", "plan:expert")],
+        [("⚖️ پلن سازمانی — نامحدود", "plan:org")],
+        [(T.BACK, "nav:main")],
+    ])
+
+
+def phone_kb():
+    """کیبورد تأیید شماره موبایل برای شروع رایگان (دکمه‌ی اشتراک‌گذاری مخاطب + بازگشت)."""
+    return ReplyKeyboardMarkup(
+        keyboard=[[KB(text=T.PHONE_SEND_BTN, request_contact=True)], [KB(text=T.BACK)]],
+        resize_keyboard=True)

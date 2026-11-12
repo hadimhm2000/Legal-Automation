@@ -6,11 +6,11 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 
 from .. import keyboards as K, texts as T
-from ..services import resultcase
+from ..services import resultcase, subscription as sub
 from ..services.flow import RunCtx, run_with_browser
 from ..services.session import Job, JobCancelled, UserTimeout, jobs
 from ..utils import to_en_digits, to_fa_digits, validate_case_number
-from .common import require_service, safe_answer, start_job
+from .common import require_inquiry_cb, require_service, safe_answer, show_plans, start_job
 
 router = Router(name="cases")
 
@@ -22,10 +22,15 @@ async def ask_portal(job: Job) -> str:
 
 
 async def _guard(message: Message, db) -> bool:
+    """گیت استعلام دستی (چاپ پرونده‌ها/جزئیات = استعلام — قاعده ۱)."""
     if jobs.busy(message.from_user.id):
         await message.answer(T.JOB_BUSY)
         return False
-    return await require_service(message, db, "case_alerts")
+    if not await require_service(message, db, "case_alerts"):
+        return False
+    from .common import inquiry_gate
+
+    return await inquiry_gate(message.bot, db, message.from_user.id, message.chat.id)
 
 
 @router.message(F.text == T.M_CASES)
@@ -95,18 +100,32 @@ def _parse_many(text: str):
 
 @router.message(F.text == T.C_TRACK)
 async def track(message: Message, db):
-    if not await _guard(message, db):
+    """ثبت پرونده برای بررسی روزانه — فقط پلن‌های حرفه‌ای، با سقف تعداد پرونده (قاعده ۲)."""
+    if jobs.busy(message.from_user.id):
+        await message.answer(T.JOB_BUSY)
+        return
+    if not await require_service(message, db, "case_alerts"):
+        return
+    cap = await sub.case_cap(db, message.from_user.id)
+    if cap <= 0:
+        await show_plans(message.bot, message.chat.id, T.TRACKING_PRO_ONLY)
         return
 
     async def coro(job: Job):
         try:
             portal = await ask_portal(job)
 
-            def validator(v):
+            async def validator(v):
                 ok, bad = _parse_many(v)
                 if bad:
                     return None, "\n".join(f"❌ {to_fa_digits(t)}: {e}" for t, e in bad)
-                return (ok or None), ("حداقل یک شماره پرونده بفرستید." if not ok else None)
+                if not ok:
+                    return None, "حداقل یک شماره پرونده بفرستید."
+                have = len(await db.tracked(job.user_id) or [])
+                if have + len(ok) > cap:
+                    return None, T.case_cap_full(cap) + "\n(پرونده‌های فعلی شما: " \
+                                f"{to_fa_digits(have)} از {to_fa_digits(cap)})"
+                return ok, None
 
             nums = await job.ask_text("شماره پرونده(ها) را بفرستید (چند شماره را با فاصله یا خط جدید جدا کنید):",
                                       validator)
@@ -147,19 +166,28 @@ async def trk_del(cb: CallbackQuery, db):
 @router.callback_query(F.data.in_({"trk:go", "trk:go:scheduled"}))
 async def trk_go(cb: CallbackQuery, db):
     await safe_answer(cb)
-    from ..services import subscription as sub
-
+    scheduled = cb.data.endswith("scheduled")
     if jobs.busy(cb.from_user.id):
         await cb.message.answer(T.JOB_BUSY)
         return
     if not await sub.has_service(db, cb.from_user.id, "case_alerts"):
         await cb.message.answer("🔒 سرویس اطلاع‌رسانی پرونده برای شما فعال نیست.")
         return
+    if scheduled:
+        # قاعده ۲: پیگیری خودکار روزانه از سهمیه استعلام کم نمی‌شود
+        if not await sub.has_auto_tracking(db, cb.from_user.id):
+            await show_plans(cb.bot, cb.message.chat.id,
+                             "🔒 پیگیری خودکار روزانه فقط در پلن‌های حرفه‌ای فعال است. برای فعال‌سازی:")
+            return
+    else:
+        # «بررسی همین حالا» = استعلام دستی ← گیت سهمیه
+        if not await require_inquiry_cb(cb, db):
+            return
     rows = await db.tracked(cb.from_user.id)
     if not rows:
         await cb.message.answer("پرونده‌ای ثبت نشده است.")
         return
-    trigger = "scheduled_08" if cb.data.endswith("scheduled") else "manual"
+    trigger = "scheduled_08" if scheduled else "manual"
 
     async def coro(job: Job):
         for portal in ("person", "lawyer"):

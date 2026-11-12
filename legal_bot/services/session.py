@@ -155,19 +155,26 @@ class Job:
 
     # ── پرسش ──
     async def ask(self, prompt: str, options: list[tuple[str, str]] | None = None, *, accept_text=True,
-                  secret=False, photo: bytes | None = None, back=False, timeout: int | None = None):
+                  secret=False, photo: bytes | None = None, back=False, timeout: int | None = None,
+                  grid: int = 0):
         """خروجی: ("text", متن) یا ("choice", value).
 
         دکمه‌ی «بازگشت» به‌طور خودکار اضافه نمی‌شود (پیش‌فرض back=False): حین فرایند،
         کیبورد پایین ربات فقط «بازگشت به منوی اصلی» و «لغو عملیات» است و سؤال‌ها
         فقط گزینه‌های خودِ همان مرحله را نشان می‌دهند. اگر جایی نیاز به دکمه‌ی بازگشت
         داخل سؤال باشد، back=True بدهید.
+        grid > 1 → دکمه‌ها به‌جای عمودی، در ردیف‌های «grid»تایی چیده می‌شوند
+        (برای فهرست شماره‌دار مثل انتخاب ابلاغیه‌ها).
         """
         self._seq += 1
         options = list(options or [])
         if back:
             options.append(("__back__", T.BACK))
-        rows = [[(label, f"j:{self.id}:{self._seq}:{i}")] for i, (_, label) in enumerate(options)]
+        btns = [(label, f"j:{self.id}:{self._seq}:{i}") for i, (_, label) in enumerate(options)]
+        if grid and grid > 1:
+            rows = [btns[i:i + grid] for i in range(0, len(btns), grid)]
+        else:
+            rows = [[b] for b in btns]
         kb = K.inline(rows) if rows else None
         loop = asyncio.get_running_loop()
         exp = _Expect(self._seq, accept_text, secret, options, loop.create_future())
@@ -194,14 +201,19 @@ class Job:
         return v
 
     async def ask_text(self, prompt, validator=None, **kw) -> str:
-        """validator(text) → (value, None) یا (None, پیام_خطا)."""
+        """validator(text) → (value, None) یا (None, پیام_خطا)؛ همزمان یا async."""
         while True:
             kind, v = await self.ask(prompt, accept_text=True, **kw)
             if kind != "text":
                 continue
             if not validator:
                 return v.strip()
-            val, err = validator(v)
+            import inspect
+
+            if inspect.iscoroutinefunction(validator):
+                val, err = await validator(v)
+            else:
+                val, err = validator(v)
             if val is not None:
                 return val
             prompt = f"{err}\nدوباره ارسال کنید:"

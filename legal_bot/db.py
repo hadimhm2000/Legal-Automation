@@ -36,6 +36,20 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     paid_until TEXT,
     locked_at TEXT,
     last_reminder TEXT,
+    -- ── مدل پلن‌های جدید (آبان ۱۴۰۵) ──
+    plan TEXT,                       -- free | base | select | pro | expert | org | NULL(فقط اعتبار)
+    cycle TEXT,                      -- monthly | quarterly | NULL
+    inquiries_left INTEGER DEFAULT 0,  -- اعتبار استعلام (شروع رایگان/پلن‌های شخصی؛ اول از این کم می‌شود)
+    quota_month TEXT,                -- ماه شمسی مالک سهمیه ماهانه (YYYY-MM)
+    quota_used INTEGER DEFAULT 0,    -- استعلام‌های مصرف‌شده این ماه
+    quota_total INTEGER DEFAULT 0,   -- سهمیه ماهانه (۰ = نامحدود/سازمانی)
+    phone TEXT,
+    phone_verified_at TEXT,
+    free_used INTEGER DEFAULT 0,     -- شروع رایگان فقط یک‌بار برای هر حساب/شماره
+    restricted_until TEXT,           -- قاعده ۶: محدودیت موقت
+    restriction_reason TEXT,
+    rules_ack_at TEXT,
+    rules_version INTEGER DEFAULT 0,
     updated_at TEXT
 );
 CREATE TABLE IF NOT EXISTS trial_usage (
@@ -50,7 +64,7 @@ CREATE TABLE IF NOT EXISTS invoices (
     notices INTEGER DEFAULT 0,
     case_alerts INTEGER DEFAULT 0,
     amount_toman INTEGER,
-    status TEXT,           -- pending | receipt_sent | approved | rejected | expired | used
+    status TEXT,           -- pending | receipt_sent | shortfall_wait | approved | rejected | expired | used
     payload TEXT,          -- فقط برای turn: شماره پرونده/بایگانی (بدون اطلاعات ورود)
     created_at TEXT,
     expires_at TEXT,
@@ -58,10 +72,25 @@ CREATE TABLE IF NOT EXISTS invoices (
     receipt_file_unique_id TEXT,
     reviewed_by INTEGER,
     reviewed_at TEXT,
-    reject_reason TEXT
+    reject_reason TEXT,
+    -- ── کارت‌به‌کارت (مثل ربات اصلی) ──
+    plan TEXT,
+    cycle TEXT,
+    shortfall_toman INTEGER,                 -- کسری اعلام‌شده توسط مدیر
+    shortfall_receipt_file_id TEXT,
+    shortfall_receipt_file_unique_id TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_receipt ON invoices(receipt_file_unique_id)
     WHERE receipt_file_unique_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS plan_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bale_id INTEGER,
+    event TEXT,            -- free_start | plan_activated | plan_upgraded | inquiry_used | quota_reset |
+                           -- restricted | violation_reported | renewed | degraded | locked
+    plan TEXT,
+    detail TEXT,
+    created_at TEXT
+);
 CREATE TABLE IF NOT EXISTS check_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     bale_id INTEGER,
@@ -155,6 +184,46 @@ def new_code(prefix="INV") -> str:
     return f"{prefix}-" + "".join(secrets.choice(alphabet) for _ in range(5))
 
 
+_SUB_COLS = {
+    "plan": "TEXT", "cycle": "TEXT", "inquiries_left": "INTEGER DEFAULT 0",
+    "quota_month": "TEXT", "quota_used": "INTEGER DEFAULT 0", "quota_total": "INTEGER DEFAULT 0",
+    "phone": "TEXT", "phone_verified_at": "TEXT", "free_used": "INTEGER DEFAULT 0",
+    "restricted_until": "TEXT", "restriction_reason": "TEXT",
+    "rules_ack_at": "TEXT", "rules_version": "INTEGER DEFAULT 0",
+}
+_INV_COLS = {
+    "plan": "TEXT", "cycle": "TEXT", "shortfall_toman": "INTEGER",
+    "shortfall_receipt_file_id": "TEXT", "shortfall_receipt_file_unique_id": "TEXT",
+}
+
+
+async def _migrate(conn) -> None:
+    """افزودن ستون‌های مدل پلن جدید به دیتابیس‌های قدیمی + انتقال داده‌ی اولیه."""
+    for table, cols in (("subscriptions", _SUB_COLS), ("invoices", _INV_COLS)):
+        cur = await conn.execute(f"PRAGMA table_info({table})")
+        have = {r[1] for r in await cur.fetchall()}
+        for col, decl in cols.items():
+            if col not in have:
+                await conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+    # ایندکس رسیدِ کسری بعد از افزودن ستون‌ها ساخته می‌شود (روی دیتابیس قدیمی ستون وجود ندارد)
+    await conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_receipt2 ON invoices(shortfall_receipt_file_unique_id) "
+                       "WHERE shortfall_receipt_file_unique_id IS NOT NULL")
+    # مدل قدیمی → مدل جدید:
+    #   تست ۳ روزه → شروع رایگان (۲ استعلام، یک‌بار مصرف)
+    #   پولی قدیمی (notices/case_alerts) → پلن پیشرو تا پایان دوره‌ی فعلی
+    from .utils import now_tehran
+
+    cur_month = f"{now_tehran().year:04d}-{now_tehran().month:02d}"
+    await conn.execute(
+        "UPDATE subscriptions SET status='FREE_ACTIVE', plan='free', free_used=1, "
+        "inquiries_left=? WHERE status='TRIAL_ACTIVE'", (config.FREE_INQUIRIES,))
+    await conn.execute(
+        "UPDATE subscriptions SET plan='pro', cycle='monthly', quota_total=?, quota_month=?, quota_used=0 "
+        "WHERE status='PAID_ACTIVE' AND paid_until IS NOT NULL AND plan IS NULL",
+        (config.PLAN_PRO_QUOTA, cur_month))
+    await conn.commit()
+
+
 class DB:
     def __init__(self, path: str | None = None):
         self.path = path or config.DB_PATH
@@ -168,6 +237,7 @@ class DB:
         self.conn = await aiosqlite.connect(self.path)
         self.conn.row_factory = aiosqlite.Row
         await self.conn.executescript(SCHEMA)
+        await _migrate(self.conn)
         await self.conn.commit()
         return self
 
@@ -240,6 +310,19 @@ class DB:
         r = await self.one("SELECT COUNT(*) c FROM check_runs WHERE bale_id=? AND started_at>=? "
                            "AND kind LIKE 'notices%'", (bale_id, since))
         return r["c"] if r else 0
+
+    async def manual_done_since(self, bale_id, hours: float, kinds: tuple[str, ...]) -> int:
+        """استعلام‌های دستیِ موفق در `hours` ساعت اخیر (برای سقف روزانه/مصرف غیرعادی)."""
+        since = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=hours)).isoformat(timespec="seconds")
+        qs = ",".join("?" for _ in kinds)
+        r = await self.one(
+            f"SELECT COUNT(*) c FROM check_runs WHERE bale_id=? AND started_at>=? AND trigger='manual' "
+            f"AND status='done' AND kind IN ({qs})", (bale_id, since, *kinds))
+        return r["c"] if r else 0
+
+    async def add_plan_event(self, bale_id, event, plan=None, detail=""):
+        await self.execute("INSERT INTO plan_events(bale_id,event,plan,detail,created_at) VALUES(?,?,?,?,?)",
+                           (bale_id, event, plan, (detail or "")[:500], now_iso()))
 
     async def add_run_items(self, run_id, ids):
         for x in ids:
