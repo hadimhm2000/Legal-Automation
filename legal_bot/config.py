@@ -100,12 +100,16 @@ HUMAN_JITTER = _float("HUMAN_JITTER", 1.0)        # تا ۱۰۰٪ تصادفی �
 SPEED_FACTOR = _float("SPEED_FACTOR", 1.0)        # ضریب کلی سرعت؛ بزرگ‌تر = کندتر (مثلاً ۱٫۵)
 PAGE_SETTLE_MS = _int("PAGE_SETTLE_MS", 1500)     # مکث انسانی بعد از لود کامل هر صفحه
 SEARCH_WAIT_MS = _int("SEARCH_WAIT_MS", 25000)    # حداکثر انتظار برای ظاهر شدن نتیجه/CTA بعد از جستجو
-PRINT_RETRY_WAIT_SEC = _int("PRINT_RETRY_WAIT_SEC", 10)
+PRINT_RETRY_WAIT_SEC = _int("PRINT_RETRY_WAIT_SEC", 30)   # طبق دستور کارفرما: ۳۰ ثانیه بین تلاش‌های «نسخه چاپی»
 PRINT_MAX_TRIES = _int("PRINT_MAX_TRIES", 3)
 ATTACHMENT_WAIT_SEC = _int("ATTACHMENT_WAIT_SEC", 120)
 ATTACHMENT_MAX_TRIES = _int("ATTACHMENT_MAX_TRIES", 3)
 DATE_WINDOW_DAYS = _int("DATE_WINDOW_DAYS", 30)
 TURN_MAX_SLOT_TRIES = _int("TURN_MAX_SLOT_TRIES", 8)
+
+# ── کارت «ابلاغیه بازنشده» و بازیابی جدول خالی (دستور کارفرما — آبان ۱۴۰۵) ──
+BADGE_WAIT_SEC = _int("BADGE_WAIT_SEC", 30)              # صبر برای لود شدن عدد کارت (قبل از ریلود سایت)
+EMPTY_LIST_RETRY_SEC = _int("EMPTY_LIST_RETRY_SEC", 10)  # فاصله‌ی فشار دکمه‌ی «۳ ماه قبل» وقتی جدول خالی ماند
 
 # ── اطلاع‌رسانی پرونده (resultcase) — طبق دستور آبان ۱۴۰۵ و ضبط‌های A/B/C/D/GGG ──
 RC_PAGE_SIZE = _int("RC_PAGE_SIZE", 100)            # تعداد نمایش در هر صفحه همیشه ۱۰۰
@@ -119,9 +123,11 @@ RC_TAB_INFO_WAIT_SEC = _int("RC_TAB_INFO_WAIT_SEC", 30)  # صبر برای در�
 RC_TAB_MAX_TRIES = _int("RC_TAB_MAX_TRIES", 5)      # ۳۰ ثانیه اطلاعات نیامد → دوباره همان تب
 
 # ── مرورگر ──
-# پیش‌فرض ۱ = نامرئی (headless) — برای سرور و تعداد کاربر بالا بسیار سبک‌تر است.
-# ۰ = مرورگر «قابل مشاهده» تا رفتار ربات را ببینید (فقط برای تست/عیب‌یابی).
-HEADLESS = os.environ.get("HEADLESS", "1") != "0"
+# پیش‌فرض ۰ = مرورگر «قابل مشاهده» — برای VPS ویندوزی که پنجره‌ی ربات باید دیده شود.
+# ربات اصلی (online.judicial.services.ble) با پنجره‌ی وسط صفحه (۱۳۶۶×۷۶۸) باز است؛
+# پنجره‌ی این ربات گوشه‌ی بالا-چپ باز می‌شود تا با آن قاطی نشود.
+# ۱ = نامرئی (headless) — برای سرور بدون نمایشگر / تعداد کاربر بالا.
+HEADLESS = os.environ.get("HEADLESS", "0") != "0"
 # نوع درخواست‌هایی که دانلود نمی‌شوند (رم/پهنای باند کمتر). عکس‌ها مسدود نمی‌شوند (کپچا لازم است)
 # و فونت‌ها هم نه (ظاهر PDFهای چاپی). نمونه: media,font
 BLOCK_RESOURCE_TYPES = {t.strip() for t in os.environ.get("BLOCK_RESOURCE_TYPES", "media").split(",") if t.strip()}

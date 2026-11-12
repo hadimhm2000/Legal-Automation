@@ -137,6 +137,22 @@ class Job:
                     await asyncio.sleep(2 * (attempt + 1))
         raise last
 
+    async def send_photo(self, data: bytes, caption: str = ""):
+        """ارسال عکس (مثل اسکرین‌شات صفحه) با تا ۳ تلاش — مشابه send_pdf."""
+        last: Exception | None = None
+        for attempt in range(3):
+            try:
+                return await self.bot.send_photo(
+                    self.chat_id, BufferedInputFile(data, "screen.png"),
+                    caption=caption[:1000] or None)
+            except Exception as e:  # pragma: no cover - شبکه
+                last = e
+                log.warning("send_photo try %d failed: %s: %s", attempt + 1,
+                            type(e).__name__, str(e)[:120])
+                if attempt < 2:
+                    await asyncio.sleep(2 * (attempt + 1))
+        raise last
+
     # ── پرسش ──
     async def ask(self, prompt: str, options: list[tuple[str, str]] | None = None, *, accept_text=True,
                   secret=False, photo: bytes | None = None, back=False, timeout: int | None = None):

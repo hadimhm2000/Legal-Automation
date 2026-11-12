@@ -51,6 +51,21 @@ ATTACH_BUSY_TEXT = ["در حال استخراج", "هنوز به پایان نر
 NOTICE_CARD_XPATH = ("xpath=ancestor::*[self::div or self::tr or self::li]"
                      "[string-length(normalize-space(.))>40][1]")
 
+# ── UI جدید سامانه‌ی ابلاغ (HTMLهای ارسالی کارفرما — آبان ۱۴۰۵) ──
+# کارت شمارنده‌ی «ابلاغیه بازنشده» روی صفحه‌ی اصلی؛ عدد داخل span کنار <strong> است.
+NEW_BADGE_CARD = ["ابلاغیه بازنشده"]                          # ✅ متن کارت (strong)
+BADGE_CARD_SEL = '[data-lb-badge="new"]'                      # برچسبی که BADGE_JS روی کارت می‌گذارد
+# دکمه‌ی «مشاهده» هر ردیف جدول ابلاغیه‌ها → مودال #modalXXL باز می‌شود
+OPEN_NOTICE_BTN = 'button[ng-click="actions.openNotice(item,false)"]'   # ✅
+# مودال جزئیات ابلاغیه (وقتی باز است کلاس show می‌گیرد)
+MODAL_OPEN = ".modal.show"                                    # ✅ #modalXXL
+MODAL_CLOSE = ".modal.show .btn-close"                        # ✅ دکمه‌ی × (ng-click="actions.clearMessage()")
+# دکمه‌ی «نسخه چاپی» داخل مودال → تب جدید ENoticePrint.aspx
+PRINT_BTN_NG = 'button[ng-click="actions.getENoticeDocumentPrint()"]'   # ✅
+# دکمه‌ی «۳ ماه قبل» — بازیابی جدول وقتی بعد از بستن مودال خالی ماند
+MONTHS3_BTN = 'button[ng-click="actions.changeDateWithMonth(-3,1)"]'    # ✅
+MONTHS3_BACK = ["3 ماه قبل", "۳ ماه قبل"]                      # ✅ متن دکمه
+
 # ── اطلاع‌رسانی پرونده (resultcase.adliran.ir) ──
 RC_LIVE = "#liveCase"                                         # ✅ «مختومه نشده»
 RC_ARCHIVED = "#archivedCase"                                 # ✅ «مختومه شده»
