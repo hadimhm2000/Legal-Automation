@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>پنل مدیریت | اتوماسیون ویژه خدمات حقوقی</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- ورود -->
+<section id="loginView" class="login-wrap hidden">
+  <div class="login-card">
+    <div class="login-logo">⚖</div>
+    <h1>پنل مدیریت</h1>
+    <p class="login-sub">اتوماسیون ویژه خدمات حقوقی</p>
+    <form id="loginForm">
+      <input type="password" id="loginPass" placeholder="رمز پنل (ADMIN_PANEL_PASSWORD)" autocomplete="current-password" required>
+      <button type="submit" class="btn btn-primary btn-block">ورود به پنل</button>
+      <p id="loginErr" class="login-err"></p>
+    </form>
+    <p class="login-note">نشست ۱۲ ساعته است؛ ۵ ورود ناموفق = ۱۰ دقیقه قفل.</p>
+  </div>
+</section>
+
+<!-- پنل -->
+<div id="appView" class="app hidden">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-icon">⚖</span>
+      <div>
+        <b>خدمات حقوقی</b>
+        <small>پنل مدیریت</small>
+      </div>
+    </div>
+    <nav id="nav">
+      <a href="#dashboard" data-sec="dashboard"><span>▦</span> داشبورد</a>
+      <a href="#users" data-sec="users"><span>👥</span> کاربران</a>
+      <a href="#invoices" data-sec="invoices"><span>🧾</span> فاکتورها<span id="invBadge" class="badge hidden"></span></a>
+      <a href="#runs" data-sec="runs"><span>⟳</span> بررسی‌ها</a>
+      <a href="#errors" data-sec="errors"><span>⚠</span> خطاها</a>
+      <a href="#notices" data-sec="notices"><span>✉</span> ابلاغیه‌ها</a>
+      <a href="#cases" data-sec="cases"><span>📂</span> پرونده‌های پیگیری</a>
+      <a href="#broadcast" data-sec="broadcast"><span>📡</span> پیام همگانی</a>
+      <a href="#beta" data-sec="beta"><span>🧪</span> فهرست بتا</a>
+      <a href="#settings" data-sec="settings"><span>⚙</span> تنظیمات</a>
+    </nav>
+    <div class="side-foot">
+      <div id="sysPill" class="sys-pill">وضعیت: …</div>
+      <button id="logoutBtn" class="btn btn-ghost btn-block">خروج</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="crumbs"><h2 id="secTitle">داشبورد</h2><p id="secSub"></p></div>
+      <div class="topbar-left">
+        <span id="clock" class="clock"></span>
+        <button id="refreshBtn" class="btn btn-ghost" title="بازخوانی">↻</button>
+      </div>
+    </header>
+
+    <div class="content">
+
+      <!-- داشبورد -->
+      <section id="sec-dashboard" class="sec">
+        <div id="kpiGrid" class="kpi-grid"></div>
+        <div class="grid-2">
+          <div class="card">
+            <h3>بررسی‌های ۷ روز اخیر</h3>
+            <div id="chartRuns" class="bar-chart"></div>
+            <div class="chart-legend"><i class="dot ok"></i> موفق <i class="dot bad"></i> ناموفق</div>
+          </div>
+          <div class="card">
+            <h3>توزیع پلن‌های فعال</h3>
+            <div id="chartPlans" class="plan-list"></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>آخرین رویدادهای پلن</h3>
+          <div id="eventsFeed" class="feed"></div>
+        </div>
+      </section>
+
+      <!-- کاربران -->
+      <section id="sec-users" class="sec hidden">
+        <div class="toolbar">
+          <input id="userSearch" class="in" placeholder="جستجو: آیدی / نام / شماره موبایل">
+          <select id="userPlan" class="in slim">
+            <option value="">همه پلن‌ها</option>
+            <option value="free">شروع رایگان</option><option value="base">پایه</option>
+            <option value="select">برگزیده</option><option value="pro">پیشرو</option>
+            <option value="expert">تخصصی</option><option value="org">سازمانی</option>
+            <option value="-">بدون پلن</option>
+          </select>
+          <select id="userStatus" class="in slim">
+            <option value="">همه وضعیت‌ها</option><option>NEW</option><option>FREE_ACTIVE</option>
+            <option>PAID_ACTIVE</option><option>LOCKED</option>
+          </select>
+          <button class="btn btn-primary" data-act="search-users">جستجو</button>
+        </div>
+        <div class="card table-wrap">
+          <table id="usersTable" class="tbl">
+            <thead><tr>
+              <th>آیدی</th><th>نام</th><th>وضعیت</th><th>پلن</th><th>اعتبار / سهمیه</th>
+              <th>موبایل</th><th>محدودیت</th><th>عضویت</th><th></th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+          <div class="pager"><button class="btn btn-ghost" data-act="users-prev">→ قبلی</button>
+            <span id="usersPageInfo" class="pager-info"></span>
+            <button class="btn btn-ghost" data-act="users-next">بعدی ←</button></div>
+        </div>
+      </section>
+
+      <!-- فاکتورها -->
+      <section id="sec-invoices" class="sec hidden">
+        <div class="toolbar">
+          <input id="invSearch" class="in" placeholder="جستجو: کد فاکتور / آیدی / نام">
+          <select id="invStatus" class="in slim">
+            <option value="">در انتظار بررسی</option>
+            <option value="receipt_sent">رسید ارسال‌شده</option>
+            <option value="shortfall_wait">در انتظار کسری</option>
+            <option value="pending">پرداخت نشده</option>
+            <option value="approved">تأییدشده</option>
+            <option value="rejected">ردشده</option>
+            <option value="all">همه</option>
+          </select>
+          <button class="btn btn-primary" data-act="search-inv">جستجو</button>
+        </div>
+        <div class="card table-wrap">
+          <table id="invTable" class="tbl">
+            <thead><tr>
+              <th>کد</th><th>کاربر</th><th>نوع</th><th>مبلغ (تومان)</th><th>پلن</th>
+              <th>وضعیت</th><th>ایجاد</th><th>انقضا</th><th>اقدام</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+          <div class="pager"><button class="btn btn-ghost" data-act="inv-prev">→ قبلی</button>
+            <span id="invPageInfo" class="pager-info"></span>
+            <button class="btn btn-ghost" data-act="inv-next">بعدی ←</button></div>
+        </div>
+      </section>
+
+      <!-- بررسی‌ها -->
+      <section id="sec-runs" class="sec hidden">
+        <div class="toolbar">
+          <select id="runStatus" class="in slim">
+            <option value="">همه وضعیت‌ها</option><option>running</option><option>done</option>
+            <option>failed</option><option>cancelled</option>
+          </select>
+          <input id="runUser" class="in slim" placeholder="آیدی کاربر">
+          <button class="btn btn-primary" data-act="search-runs">جستجو</button>
+        </div>
+        <div class="card table-wrap">
+          <table id="runsTable" class="tbl">
+            <thead><tr>
+              <th>#</th><th>کاربر</th><th>نوع</th><th>محرک</th><th>وضعیت</th>
+              <th>مرحله</th><th>جدید</th><th>خطا</th><th>شروع</th><th>پایان</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+          <div class="pager"><button class="btn btn-ghost" data-act="runs-prev">→ قبلی</button>
+            <span id="runsPageInfo" class="pager-info"></span>
+            <button class="btn btn-ghost" data-act="runs-next">بعدی ←</button></div>
+        </div>
+      </section>
+
+      <!-- خطاها -->
+      <section id="sec-errors" class="sec hidden">
+        <div class="card table-wrap">
+          <table id="errTable" class="tbl">
+            <thead><tr><th>#</th><th>کاربر</th><th>run</th><th>مرحله</th><th>دسته</th><th>پیام</th><th>زمان</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <div class="pager"><button class="btn btn-ghost" data-act="err-prev">→ قبلی</button>
+            <span id="errPageInfo" class="pager-info"></span>
+            <button class="btn btn-ghost" data-act="err-next">بعدی ←</button></div>
+        </div>
+      </section>
+
+      <!-- ابلاغیه‌ها -->
+      <section id="sec-notices" class="sec hidden">
+        <div class="toolbar">
+          <input id="noticeSearch" class="in" placeholder="جستجو: شماره پرونده / ابلاغیه / شعبه / آیدی">
+          <button class="btn btn-primary" data-act="search-notices">جستجو</button>
+        </div>
+        <div class="card table-wrap">
+          <table id="noticeTable" class="tbl">
+            <thead><tr><th>کاربر</th><th>شماره ابلاغیه</th><th>پرونده</th><th>شعبه</th>
+              <th>نوع</th><th>ارسال</th><th>وضعیت</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <div class="pager"><button class="btn btn-ghost" data-act="notice-prev">→ قبلی</button>
+            <span id="noticePageInfo" class="pager-info"></span>
+            <button class="btn btn-ghost" data-act="notice-next">بعدی ←</button></div>
+        </div>
+      </section>
+
+      <!-- پرونده‌ها -->
+      <section id="sec-cases" class="sec hidden">
+        <div class="card table-wrap">
+          <table id="caseTable" class="tbl">
+            <thead><tr><th>کاربر</th><th>شماره پرونده</th><th>سامانه</th><th>آخرین تغییر</th>
+              <th>آخرین بررسی</th></tr></thead>
+            <tbody></tbody>
+          </table>
+          <div class="pager"><button class="btn btn-ghost" data-act="case-prev">→ قبلی</button>
+            <span id="casePageInfo" class="pager-info"></span>
+            <button class="btn btn-ghost" data-act="case-next">بعدی ←</button></div>
+        </div>
+      </section>
+
+      <!-- پیام همگانی -->
+      <section id="sec-broadcast" class="sec hidden">
+        <div class="grid-2">
+          <div class="card">
+            <h3>پیام همگانی کاربران</h3>
+            <select id="bcTarget" class="in">
+              <option value="all">همه کاربران</option>
+              <option value="active">کاربران فعال (رایگان + پرداختی)</option>
+              <option value="paid">فقط پرداختی</option>
+              <option value="free">فقط شروع رایگان</option>
+              <option value="beta">فقط فهرست بتا</option>
+            </select>
+            <textarea id="bcText" class="in area" rows="6" placeholder="متن پیام…"></textarea>
+            <button class="btn btn-primary" data-act="send-broadcast">ارسال به همه</button>
+            <p id="bcResult" class="hint"></p>
+          </div>
+          <div class="card">
+            <h3>پیام به یک کاربر</h3>
+            <input id="dmUser" class="in" placeholder="آیدی عددی کاربر" inputmode="numeric">
+            <textarea id="dmText" class="in area" rows="6" placeholder="متن پیام…"></textarea>
+            <button class="btn btn-primary" data-act="send-dm">ارسال پیام</button>
+            <p id="dmResult" class="hint"></p>
+          </div>
+        </div>
+      </section>
+
+      <!-- بتا -->
+      <section id="sec-beta" class="sec hidden">
+        <div class="toolbar">
+          <input id="betaAdd" class="in slim" placeholder="آیدی عددی" inputmode="numeric">
+          <button class="btn btn-primary" data-act="add-beta">افزودن به بتا</button>
+        </div>
+        <div class="card table-wrap">
+          <table id="betaTable" class="tbl">
+            <thead><tr><th>آیدی</th><th>نام</th><th>عضویت</th><th></th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- تنظیمات -->
+      <section id="sec-settings" class="sec hidden">
+        <div id="settingsBody" class="grid-2"></div>
+      </section>
+
+    </div>
+  </main>
+</div>
+
+<!-- مودال عمومی -->
+<div id="modal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head"><h3 id="modalTitle"></h3><button class="btn btn-ghost" data-act="close-modal">×</button></div>
+    <div id="modalBody" class="modal-body"></div>
+  </div>
+</div>
+
+<div id="toasts" class="toasts"></div>
+<script src="/app.js"></script>
+</body>
+</html>

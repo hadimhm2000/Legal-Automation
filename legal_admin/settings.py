@@ -1,0 +1,33 @@
+"""تنظیمات مستقل پنل مدیریت — عمداً جدا از legal_bot/config.py تا پچ کوچک بماند.
+
+متغیرها (در .env):
+    ADMIN_PANEL_HOST      پیش‌فرض 0.0.0.0 (دسترسی از بیرون VPS)
+    ADMIN_PANEL_PORT      پیش‌فرض 8300 — عمداً دور از 3000 و 3100
+    ADMIN_PANEL_PASSWORD  رمز ورود پنل (الزامی)
+    ADMIN_PANEL_SECRET    راز کوکی نشست (اختیاری؛ پیش‌فرض از توکن+رمز ساخته می‌شود)
+"""
+from __future__ import annotations
+
+import hashlib
+import os
+
+
+def _int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+HOST = os.environ.get("ADMIN_PANEL_HOST", "0.0.0.0")
+PORT = _int("ADMIN_PANEL_PORT", 8300)
+PASSWORD = os.environ.get("ADMIN_PANEL_PASSWORD", "")
+SECRET = os.environ.get("ADMIN_PANEL_SECRET", "")
+SESSION_HOURS = _int("ADMIN_PANEL_SESSION_HOURS", 12)
+
+# رمز پیش‌فرض در صورت خالی بودن راز: ترکیب پایدار توکن+رمز (تا ری‌استارت نشست‌ها را نبندد)
+if not SECRET:
+    from legal_bot import config as _bot_config
+
+    SECRET = hashlib.sha256(
+        f"{_bot_config.LEGAL_BOT_TOKEN}|{PASSWORD}".encode("utf-8")).hexdigest()
