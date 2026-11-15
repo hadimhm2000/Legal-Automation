@@ -117,7 +117,10 @@ TURN_ROLE_PLACEHOLDER = ["انتخاب سمت جهت ملاقات"]             
 TURN_ROLE_WORD = "دادورز"                                     # ✅ همیشه دادورز
 TURN_PERSON_PLACEHOLDER = ["هیچ موردی انتخاب نشده"]           # ✅ فهرست دوم (زیر دادورز)
 TURN_NEXT = "#btnNextStep"                                    # ✅
+TURN_PREV = "#btnPrevStep"                                    # ✅ «مرحله ی قبلی» (HTML کارفرما)
 TURN_REASON_BTN = "#btnUnitReferalReasonTypeModal"            # ✅ «فهرست علت ها»
+TURN_REASON_15 = ["درخواست جلب متهم"]                         # ✅ ردیف ۱۵ فهرست علت ها (دستور کارفرما)
+TURN_REASON_ROW = 'tr[ng-repeat*="theUnitReferalReasonTypeFilterdTempList"]'  # ✅ ردیف‌های مودال علت‌ها
 TURN_UNDERSTOOD = ["متوجه شدم"]                               # ✅
 TURN_CREATE = "#btnCreateUnitTurn"                            # ✅ «ثبت و دریافت نوبت»
 TURN_YES = ["بلی", "بله"]                                     # ✅
@@ -125,3 +128,16 @@ TURN_CLOSE = ["بستن"]                                         # ✅
 TURN_PRINT = "#btnPrintUnitTurn"                              # ✅ → Reports/PrintUnitTurn?No=
 TURN_CREATE_API = "/Turn/CMSUnitTurnCreate"                   # ✅ 500 = نوبت انتخابی پر/نامعتبر
 EXECUTION_WORDS = ("اجرای احکام", "اجرا احکام", "اجراي احكام", "اجراي احکام", "اجرای احكام")
+
+# ── پیام‌های سامانه‌ی نوبت‌دهی (HTMLهای ارسالی کارفرما — آبان ۱۴۰۵) ──
+# پیام قرمز/هشدار سامانه (sweet-alert / alert-danger / h2) — مثل:
+# «هیچ سمتی در «...» تعریف نشده است، امکان ورود به مرحله بعد وجود ندارد»
+ALERT_SWEET = ".sweet-alert.showSweetAlert.visible p, .showSweetAlert p, .sweet-alert p"
+# واژه‌های خطای روزِ غیرقابل انتخاب: «به دلیل عدم حضور دادورز اجراي احكام، نمی توان
+# «پنجشنبه ها» را انتخاب نمود.» یا تعطیلات رسمی → روز بعد انتخاب می‌شود
+DAY_BLOCKED_WORDS = ("پنجشنبه", "پنج شنبه", "تعطیل", "عدم حضور")
+# خطای علت مراجعه: «در تنظیمات نوبت دهی برای این واحد نمی توان علت مراجعه را
+# «معرفي وراث محكوم عليه» انتخاب نمود.» → مرحله‌ی قبلی ← علت ۱۵ (دستور کارفرما)
+REASON_ERROR_WORDS = ("علت مراجعه",)
+# خطای «هیچ سمتی ... تعریف نشده است» (پیام sweet-alert کارفرما)
+ROLE_ERROR_WORDS = ("هیچ سمتی", "تعریف نشده")

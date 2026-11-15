@@ -10,7 +10,8 @@
   اول همین روند انجام می‌شود) ← «نسخه چاپی» (تب جدید ENoticePrint.aspx ← PDF؛
   اگر باز نشد ۳۰ ثانیه صبر و دوباره) ← «پیوست‌ها» ← بستن مودال با دکمه‌ی ×.
   بعد از بستن مودال اگر جدول خالی بود (فقط VerticalGap): دکمه‌ی «۳ ماه قبل» و
-  صبر برای لود کامل؛ اگر ردیفی نیامد هر ۱۰ ثانیه دوباره — به تعداد ابلاغیه‌های بازنشده.
+  صبر برای لود کامل؛ اگر ردیفی نیامد هر ۱۰ ثانیه دوباره — حداکثر ۳ بار؛ بعد از آن
+  به کاربر اعلام می‌شود «در ۹ ماه اخیر ابلاغ جدیدی ثبت نشده است» (دستور کارفرما).
   اگر ابلاغیه دیگر در فهرست نبود (چون مشاهده شد) ← «بازگشت» ← «ابلاغیه‌های
   مشاهده شده» و پیدا کردن با همان شماره.
   «چاپ گروهی» استفاده نمی‌شود (به برنامه‌ی محلی سمپ‌یار روی localhost:8010 نیاز دارد).
@@ -209,7 +210,8 @@ class Eblagh:
                 return True
             # فقط پیام‌های روشنِ «خالی بودن»؛ واژه‌ی کلی «ابلاغیه» در سرصفحه هست و علامت لود نیست
             txt = await page_text(self.page)
-            return any(w in txt for w in ("یافت نشد", "موردی به نمایش", "رکوردی", "موجود نیست"))
+            return any(w in txt for w in ("یافت نشد", "موردی به نمایش", "رکوردی", "موجود نیست",
+                                          "ندارید"))
         await wait_first({"list": ready}, timeout_ms=config.SEARCH_WAIT_MS)
         await human_pause(self.page)
 
@@ -357,9 +359,10 @@ class Eblagh:
         """بعد از بستن مودال، جدول ابلاغیه‌های بازنشده خالی شد (فقط VerticalGap):
 
         دکمه‌ی «۳ ماه قبل» را می‌زنیم و صبر می‌کنیم تا لود کامل شود؛ اگر ردیفی
-        نیامد، هر ۱۰ ثانیه دوباره — حداکثر به تعداد ابلاغیه‌های بازنشده.
+        نیامد، هر ۱۰ ثانیه دوباره — حداکثر «۳ بار» (دستور کارفرما: بعد از ۳ بار
+        بی‌نتیجه ← در ۹ ماه اخیر ابلاغ جدیدی نیست؛ ۳ × ۳ ماه = ۹ ماه).
         """
-        presses = max(1, int(max_presses or 1))
+        presses = max(1, min(int(max_presses or 1), config.EMPTY_LIST_MAX_PRESSES))
         await self.job.say(T.EMPTY_LIST_RECOVERING)
         for i in range(presses):
             if not await self._press_months3():
@@ -752,13 +755,15 @@ async def work_new(ctx, br, login, page):
     cards = await e.all_cards()
     ids = [c["id"] for c in cards]
     if state == "count" and not ids:
-        # بَج عدد داد ولی جدول خالی/لود نشد → «۳ ماه قبل»
+        # بَج عدد داد ولی جدول خالی/لود نشد → «۳ ماه قبل» (حداکثر ۳ بار)
         if await e.recover_empty_list(count):
             ids = [c["id"] for c in await e.all_cards()]
     if not ids:
         if state == "count" and count > 0:
-            # بَج عدد داده بود ولی جدول نیامد ← ساختار صفحه عوض شده یا کلیک کارت کار نکرد
-            raise FlowError("PARSE_CHANGED", f"badge count={count} but new-notices list is empty")
+            # بعد از ۳ بار «۳ ماه قبل» هم ردیفی نیامد ← کاربر در ۹ ماه اخیر ابلاغ
+            # جدیدی ندارد (۳ × ۳ ماه)؛ این خطای سامانه نیست (دستور کارفرما).
+            await ctx.job.say(T.NO_NEW_NOTICES_9M)
+            return
         txt = await page_text(e.page)
         if not re.search(r"ابلاغیه|موردی|یافت", txt):
             raise FlowError("PARSE_CHANGED", "new-notices page not recognised")

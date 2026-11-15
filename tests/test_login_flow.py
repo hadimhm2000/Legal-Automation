@@ -107,8 +107,9 @@ class FakeBot:
         pass
 
 
-async def drive(job: Job, bot: FakeBot, answers: list):
-    """answers: [(بخشی از متن پرسش, ("text", v) یا ("choice", key))] به ترتیب."""
+async def drive(job: Job, bot: FakeBot, answers: list, log: list | None = None):
+    """answers: [(بخشی از متن پرسش, ("text", v) یا ("choice", key))] به ترتیب.
+    log: ثبت (متن پرسش، کلیدهای گزینه‌ها) برای بررسی دکمه‌ها."""
     i = 0
     while True:  # تا وقتی لغو شود (تأییدهای «مقدار دریافتی» بعد از آخرین پاسخ هم باید زده شوند)
         await asyncio.sleep(0.05)
@@ -116,6 +117,8 @@ async def drive(job: Job, bot: FakeBot, answers: list):
         if not e or e.future.done():
             continue
         prompt = bot.texts[-1] or ""
+        if log is not None:
+            log.append((prompt, [k for k, _ in e.options]))
         if prompt.startswith("مقدار دریافتی"):
             job.deliver_callback(e.seq, [k for k, _ in e.options].index("ok"))
             continue
@@ -137,7 +140,7 @@ def fast(monkeypatch):
     monkeypatch.setattr(config, "HEADLESS", True)
 
 
-async def _run(site, answers):
+async def _run(site, answers, log: list | None = None):
     bot = FakeBot()
     job = Job(bot=bot, user_id=1, chat_id=1, kind="t")
     steps = []
@@ -149,7 +152,7 @@ async def _run(site, answers):
     async with Browser() as br:
         await br.context.route("**/*", site.handle)
         login = sana_login.SanaLogin(ctx, br, "eblagh")
-        driver = asyncio.create_task(drive(job, bot, answers))
+        driver = asyncio.create_task(drive(job, bot, answers, log))
         try:
             page = await asyncio.wait_for(login.run(), 90)
             ok = login.is_target(page)
@@ -168,19 +171,56 @@ async def test_full_login_with_wrong_password_captcha_and_wrong_otp():
         (T.ASK_PASSWORD, ("text", "badpw")),
         ("رمز شخصی شما اشتباه است", ("text", "goodpw")),
         ("کد امنیتی", ("text", "52877")),
-        (T.ASK_OTP[:20], ("choice", "resend")),
-        ("رمز موقت برای شما پیامک شد", ("text", "111111")),
-        ("رمز موقت اشتباه می‌باشد", ("text", "123456")),
+        # دستور کارفرما: با خودِ صفحه‌ی رمز موقت، پیامک فرستاده شده ← پرسش اول
+        # گزینه‌ی «ارسال رمز موقت» ندارد؛ فقط «وارد کنید» + توصیه‌ی ۳۰ دقیقه.
+        (T.ASK_OTP[:16], ("text", "111111")),
+        # رمز اشتباه ← دوباره پرسیده می‌شود (بدون ارسال مجدد خودکار)؛ حالا گزینه‌ی
+        # «ارسال رمز موقت» هست (۳ ساعت از آخرین ارسال گذشته) ← یک‌بار ارسال می‌شود.
+        ("رمز موقت واردشده صحیح نبود", ("choice", "resend")),
+        ("رمز موقت دوباره برای شما ارسال شد", ("text", "123456")),
     ]
     bot, job, steps, ok = await _run(site, answers)
     assert ok
-    assert site.resends == 2                     # یکی دستی، یکی خودکار بعد از رمز موقت اشتباه
+    assert site.resends == 1                     # فقط ارسالِ دستی؛ ارسال مجدد خودکار حذف شد
     assert bot.photos == 1                       # فقط تصویر کپچا
     assert steps[:4] == ["L04", "L05", "L06", "L07"]
+    # پیام پرسش اول: «ارسال شد؛ وارد کنید» + توصیه‌ی ۳۰ دقیقه (دستور کارفرما)
+    otp_prompt = next(t for t in bot.texts if t and "رمز موقت برای شما پیامک شد" in t)
+    assert "۳۰ دقیقه" in otp_prompt
     assert vault.get(job.owner, "nc") == "4420160616"  # تا پایان Job در RAM (برای ورود مجدد)
     vault.wipe(job.owner)
     assert vault.is_empty(job.owner)
     assert all("goodpw" not in (t or "") and "4420160616" not in (t or "") for t in bot.texts)
+
+
+async def test_otp_resend_option_absent_on_first_prompt_and_within_cooldown():
+    """قاعده‌ی کارفرما: پرسش اول رمز موقت دکمه‌ی ارسال ندارد (سامانه خودش پیامک کرده)؛
+    بعد از یک ارسال مجدد، تا ۳ ساعت گزینه‌ی جدید نمی‌آید."""
+    from legal_bot.services import sana_login as sl
+
+    sl._OTP_RESEND_RAM.clear()
+    site = Site()
+    answers = [
+        (T.ASK_NATIONAL_CODE, ("text", "4420160616")),
+        (T.ASK_PASSWORD, ("text", "goodpw")),
+        (T.ASK_OTP[:16], ("text", "111111")),                       # اشتباه ۱ (بدون دکمه‌ی ارسال)
+        ("رمز موقت واردشده صحیح نبود", ("choice", "resend")),        # تنها ارسال مجدد مجاز
+        ("رمز موقت دوباره برای شما ارسال شد", ("text", "111111")),    # اشتباه ۲
+        ("رمز موقت واردشده صحیح نبود", ("text", "111111")),          # اشتباه ۳ ← توقف
+    ]
+    log = []
+    with pytest.raises(FlowError) as ei:
+        await _run(site, answers, log=log)
+    assert ei.value.category == "OTP_RESEND_LIMIT"
+    assert site.resends == 1                       # ارسال دوم (خودکار یا دستی) انجام نشد
+    otp_prompts = [(p, o) for p, o in log if "رمز موقت" in (p or "") and "مقدار دریافتی" not in p]
+    # پرسش اول: بدون دکمه‌ی «ارسال رمز موقت» (دستور کارفرما)
+    first = next(o for p, o in otp_prompts if "پیامک شد؛" in p)
+    assert "resend" not in first
+    # فقط یک‌بار — بعد از اولین اشتباه — دکمه‌ی ارسال می‌آید؛ پس از آن تا ۳ ساعت نه
+    with_resend = [p for p, o in otp_prompts if "resend" in o]
+    assert len(with_resend) == 1 and "صحیح نبود" in with_resend[0]
+    sl._OTP_RESEND_RAM.clear()
 
 
 async def test_wrong_password_limit_stops():

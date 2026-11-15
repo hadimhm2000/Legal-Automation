@@ -111,6 +111,8 @@ JOB_TOTAL_TIMEOUT_SEC = _int("JOB_TOTAL_TIMEOUT_SEC", 3600)
 MAX_OTP_RESENDS = _int("MAX_OTP_RESENDS", 3)
 MAX_PASSWORD_ATTEMPTS = _int("MAX_PASSWORD_ATTEMPTS", 3)
 MAX_PORTAL_ENTRY_ATTEMPTS = _int("MAX_PORTAL_ENTRY_ATTEMPTS", 4)
+# دستور کارفرما (آبان ۱۴۰۵): یک‌بار «ارسال رمز موقت» ← تا ۳ ساعت ارسال جدید ممنوع
+OTP_RESEND_COOLDOWN_SEC = _int("OTP_RESEND_COOLDOWN_SEC", 3 * 60 * 60)
 
 
 def _float(name, default):
@@ -133,10 +135,14 @@ ATTACHMENT_WAIT_SEC = _int("ATTACHMENT_WAIT_SEC", 120)
 ATTACHMENT_MAX_TRIES = _int("ATTACHMENT_MAX_TRIES", 3)
 DATE_WINDOW_DAYS = _int("DATE_WINDOW_DAYS", 30)
 TURN_MAX_SLOT_TRIES = _int("TURN_MAX_SLOT_TRIES", 8)
+# چند روز نامزد (از فردا؛ بدون پنجشنبه/جمعه/تعطیل رسمی) برای یافتن نوبت خالی
+TURN_MAX_DAY_LOOKAHEAD = _int("TURN_MAX_DAY_LOOKAHEAD", 14)
 
 # ── کارت «ابلاغیه بازنشده» و بازیابی جدول خالی (دستور کارفرما — آبان ۱۴۰۵) ──
 BADGE_WAIT_SEC = _int("BADGE_WAIT_SEC", 30)              # صبر برای لود شدن عدد کارت (قبل از ریلود سایت)
 EMPTY_LIST_RETRY_SEC = _int("EMPTY_LIST_RETRY_SEC", 10)  # فاصله‌ی فشار دکمه‌ی «۳ ماه قبل» وقتی جدول خالی ماند
+# سقف فشار «۳ ماه قبل» = ۳ بار؛ بعد از آن پیام «۹ ماه اخیر ابلاغ جدیدی نیست» (دستور کارفرما)
+EMPTY_LIST_MAX_PRESSES = _int("EMPTY_LIST_MAX_PRESSES", 3)
 
 # ── اطلاع‌رسانی پرونده (resultcase) — طبق دستور آبان ۱۴۰۵ و ضبط‌های A/B/C/D/GGG ──
 RC_PAGE_SIZE = _int("RC_PAGE_SIZE", 100)            # تعداد نمایش در هر صفحه همیشه ۱۰۰

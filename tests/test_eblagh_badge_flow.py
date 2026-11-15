@@ -21,8 +21,10 @@ FX = Path(__file__).parent / "fixtures"
 IDS = ["9910103593005227", "9910103593004809"]
 
 
-def new_ui_page(badge: str) -> str:
-    """سایت ساختگی با UI جدید. badge: '0' یا '2' یا 'loading'."""
+def new_ui_page(badge: str, empty: bool = False) -> str:
+    """سایت ساختگی با UI جدید. badge: '0' یا '2' یا 'loading'؛ empty: جدول همیشه خالی."""
+    empty_p = ('<p id="noNew">شما ابلاغیه جدید (مشاهده نشده) در این بازه زمانی ندارید. '
+               'قسمت ابلاغیه های مشاهده شده را بررسی کنید</p>') if empty else ''
     return f"""<html><head><meta charset="utf-8"><style>
       .modal {{ display: none; position: fixed; inset: 0; background: #fff; }}
       .modal.show {{ display: block; }}
@@ -41,6 +43,7 @@ def new_ui_page(badge: str) -> str:
   <div class="col-lg-3 col-md-2">
     <button class="btn btn-primary w-100" ng-click="actions.changeDateWithMonth(-3,1)" id="m3">3 ماه قبل</button>
   </div>
+  {empty_p}
   <div id="rows"></div>
   <div class="VerticalGap" id="gap" style="display:none"></div>
 </div>
@@ -62,6 +65,7 @@ def new_ui_page(badge: str) -> str:
 <script>
 const BADGE = '{badge}';
 const NOTICES = {IDS};
+const EMPTY = {'true' if empty else 'false'};
 let viewed = [], cur = null, glitched = false, listOpen = false, hidden = false;
 const badgeNum = document.getElementById('badgeNum');
 if (BADGE === 'loading') {{
@@ -70,6 +74,7 @@ if (BADGE === 'loading') {{
   badgeNum.innerText = BADGE;                   // 0 یا 2
 }}
 function renderRows() {{
+  if (EMPTY) {{ return; }}
   const rows = document.getElementById('rows');
   rows.innerHTML = '';
   NOTICES.filter(n => !viewed.includes(n)).forEach(n => {{
@@ -132,13 +137,15 @@ def print_page(n):
     return f"<html><body>{html}</body></html>"
 
 
-def make_handler(badge):
+def make_handler(badge, empty=False):
+    page = new_ui_page(badge, empty)
+
     async def handler(route):
         url = route.request.url
         if "ENoticePrint.aspx" in url:
             return await route.fulfill(body=print_page(url.split("n=")[1].split("&")[0]),
                                        content_type="text/html; charset=utf-8")
-        return await route.fulfill(body=new_ui_page(badge), content_type="text/html; charset=utf-8")
+        return await route.fulfill(body=page, content_type="text/html; charset=utf-8")
     return handler
 
 
@@ -176,7 +183,7 @@ def fast(monkeypatch):
     monkeypatch.setattr(config, "SEARCH_WAIT_MS", 4000)
 
 
-async def _run_work_new(db, badge):
+async def _run_work_new(db, badge, empty=False):
     job = FakeJob()
     ctx = make_ctx(db, job)
 
@@ -185,7 +192,7 @@ async def _run_work_new(db, badge):
 
     login = types.SimpleNamespace(ensure=ensure)
     async with Browser() as br:
-        await br.context.route("**/*", make_handler(badge))
+        await br.context.route("**/*", make_handler(badge, empty))
         await br.page.goto("https://eblagh1.adliran.ir/Notice/Home/Index")
         await eblagh.work_new(ctx, br, login, br.page)
     return job
@@ -225,3 +232,13 @@ async def test_badge_loading_forever_reports_down(db):
         await _run_work_new(db, "loading")
     assert ei.value.category == "EBLAGH_DOWN"
     assert "قطع" in (ei.value.user_message or "")
+
+
+async def test_badge_count_but_list_always_empty_says_9_months(db):
+    """بَج عدد داد ولی جدول همیشه خالی است و «۳ ماه قبل» هم چیزی برنمی‌گرداند →
+    بعد از ۳ بار، به‌جای «سامانه به مشکل خورده» پیام «در ۹ ماه اخیر ابلاغ جدیدی
+       ثبت نشده است» برای کاربر می‌رود (دستور کارفرما)."""
+    await db.upsert_user(1, 1)
+    job = await _run_work_new(db, "2", empty=True)
+    assert any("۹ ماه" in s for s in job.said)
+    assert not job.pdfs and not job.photos          # هیچ چاپ/اسکرین‌شاتی انجام نشد

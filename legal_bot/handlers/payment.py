@@ -176,9 +176,18 @@ async def _process_receipt(message: Message, db, inv) -> None:
         file_id, uniq, kind = message.document.file_id, message.document.file_unique_id, "document"
     is_shortfall = inv["status"] == "shortfall_wait"
     dup_col = "shortfall_receipt_file_unique_id" if is_shortfall else "receipt_file_unique_id"
-    dup = await db.one(f"SELECT code FROM invoices WHERE {dup_col}=?", (uniq,))
+    fid_col = "shortfall_receipt_file_id" if is_shortfall else "receipt_file_id"
+    # تشخیص «رسید تکراری» فقط وقتی است که «هم file_id و هم file_unique_id» همان فایلِ قبلاً
+    # ثبت‌شده‌ی یک فاکتور دیگرِ فعال باشد. (دستور کارفرما: پیام‌رسان بله برای عکس‌های
+    # مختلف گاهی file_unique_id یکسان می‌دهد ← عکس جدید نباید «تکراری» اعلام شود.)
+    dup = await db.one(
+        f"SELECT code FROM invoices WHERE {dup_col}=? AND {fid_col}=? AND code<>? "
+        f"AND status IN ('receipt_sent','shortfall_wait','approved')",
+        (uniq, file_id, inv["code"]))
     if dup:
-        await message.answer("⚠️ این رسید قبلاً ارسال شده است. لطفاً رسید همین پرداخت را بفرستید.")
+        await message.answer(
+            "⚠️ این تصویر رسید قبلاً برای فاکتور "
+            f"{dup['code']} ارسال شده است. لطفاً رسید همین پرداخت را بفرستید.")
         return
     if is_shortfall:
         await db.execute("UPDATE invoices SET status='receipt_sent', shortfall_receipt_file_id=?, "

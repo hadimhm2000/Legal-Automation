@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import logging
 import re
+import time
 
 from playwright.async_api import Page
 
@@ -57,6 +58,38 @@ def _validate_pw(v):
 def _validate_otp(v):
     v = clean_digits(v)
     return (v, None) if 4 <= len(v) <= 10 else (None, "رمز موقت باید فقط عدد (معمولاً ۶ رقم) باشد.")
+
+
+# ── قاعده‌ی کارفرما (آبان ۱۴۰۵): یک‌بار «ارسال رمز موقت» ← تا ۳ ساعت ارسال جدید ممنوع ──
+# زمان آخرین ارسالِ رمز موقت هر کاربر؛ در دیتابیس (settings) می‌ماند و اگر در دسترس
+# نبود (مثل تست‌ها) فقط در RAM همین پروسه.
+_OTP_RESEND_RAM: dict[int, float] = {}
+
+
+async def otp_resend_allowed(ctx, user_id: int) -> bool:
+    """آیا ۳ ساعت از آخرین ارسالِ رمز موقت این کاربر گذشته است؟"""
+    last = 0.0
+    db = getattr(ctx, "db", None)
+    if db is not None:
+        try:
+            v = await db.get_setting(f"otp_resend:{user_id}")
+            if v:
+                last = float(v)
+        except Exception:
+            last = _OTP_RESEND_RAM.get(user_id, 0.0)
+    else:
+        last = _OTP_RESEND_RAM.get(user_id, 0.0)
+    return (time.time() - last) >= config.OTP_RESEND_COOLDOWN_SEC
+
+
+async def otp_mark_resend(ctx, user_id: int):
+    """ثبت زمان ارسال رمز موقت ← تا ۳ ساعت گزینه‌ی ارسال جدید غیرفعال می‌ماند."""
+    now = time.time()
+    _OTP_RESEND_RAM[user_id] = now
+    db = getattr(ctx, "db", None)
+    if db is not None:
+        with contextlib.suppress(Exception):
+            await db.set_setting(f"otp_resend:{user_id}", str(now))
 
 
 async def collect_credentials(job, ctx):
@@ -255,18 +288,24 @@ class SanaLogin:
         if state != "otp":
             raise FlowError("LOGIN_UI_CHANGED", "otp field not shown", T.SITE_DOWN)
 
-        # L07 رمز موقت
+        # L07 رمز موقت (دستور کارفرما — آبان ۱۴۰۵):
+        # سامانه با نمایش صفحه‌ی رمز موقت، خودش پیامک را فرستاده (متن سبز/نارنجی سایت)
+        # ← گزینه‌ی «ارسال رمز موقت» فعال نیست و فقط گفته می‌شود «رمز موقت ارسال شد؛
+        # وارد کنید» + «اگر نرسید ۳۰ دقیقه دیگر دوباره اقدام کنید».
+        # فقط بعد از اشتباه بودن رمز — و اگر ۳ ساعت از آخرین ارسال گذشته باشد —
+        # گزینه‌ی ارسال یک‌بار نمایش داده می‌شود؛ پس از آن تا ۳ ساعت قفل است.
         await self.ctx.step("L07")
-        resends = 0
+        wrong = 0
         prompt = T.ASK_OTP_RELOGIN if relogin else T.ASK_OTP
         while True:
             if vault.get(job.owner, "otp") is None:
+                extra = None
+                if wrong and await otp_resend_allowed(self.ctx, job.user_id):
+                    extra = [("resend", T.SEND_OTP_BTN)]
                 res = await job.ask_secret("otp", prompt, _validate_otp, lambda v: "•" * len(v),
-                                           extra_options=[("resend", T.SEND_OTP_BTN)])
+                                           extra_options=extra)
                 if res == ("choice", "resend"):
-                    resends += 1
-                    if resends > config.MAX_OTP_RESENDS:
-                        raise FlowError("OTP_RESEND_LIMIT", "resend limit", T.OTP_LIMIT)
+                    await otp_mark_resend(self.ctx, job.user_id)   # تا ۳ ساعت دیگر قفل
                     await self._resend(page)
                     prompt = T.OTP_SENT
                     continue
@@ -277,10 +316,10 @@ class SanaLogin:
             if status is None:
                 raise FlowError("LOGIN_UI_CHANGED", "no CheckPersonOtpLogin response", T.SITE_DOWN)
             vault.pop(job.owner, "otp")
-            resends += 1
-            if resends > config.MAX_OTP_RESENDS:
+            wrong += 1
+            if wrong >= max(1, config.MAX_OTP_RESENDS):
                 raise FlowError("OTP_RESEND_LIMIT", "wrong otp limit", T.OTP_LIMIT)
-            await self._resend(page)
+            # ارسال مجددِ خودکار انجام نمی‌شود؛ فقط دوباره پرسیده می‌شود (دستور کارفرما)
             prompt = T.OTP_WRONG
         await self._after_login(page)
 

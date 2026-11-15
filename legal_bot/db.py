@@ -80,8 +80,9 @@ CREATE TABLE IF NOT EXISTS invoices (
     shortfall_receipt_file_id TEXT,
     shortfall_receipt_file_unique_id TEXT
 );
-CREATE UNIQUE INDEX IF NOT EXISTS ux_receipt ON invoices(receipt_file_unique_id)
-    WHERE receipt_file_unique_id IS NOT NULL;
+-- ایندکس یکتا روی receipt_file_unique_id حذف شد: پیام‌رسان بله برای فایل‌های مختلف
+-- گاهی file_unique_id یکسان می‌دهد و ایندکس باعث خطا/«رسید تکراری» نادرست می‌شد
+-- (دستور کارفرما — آبان ۱۴۰۵). تشخیص تکراری در handlers/payment.py انجام می‌شود.
 CREATE TABLE IF NOT EXISTS plan_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     bale_id INTEGER,
@@ -205,9 +206,11 @@ async def _migrate(conn) -> None:
         for col, decl in cols.items():
             if col not in have:
                 await conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
-    # ایندکس رسیدِ کسری بعد از افزودن ستون‌ها ساخته می‌شود (روی دیتابیس قدیمی ستون وجود ندارد)
-    await conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_receipt2 ON invoices(shortfall_receipt_file_unique_id) "
-                       "WHERE shortfall_receipt_file_unique_id IS NOT NULL")
+    # ایندکس‌های یکتای رسید حذف می‌شوند (دستور کارفرما — آبان ۱۴۰۵):
+    # file_unique_id بله بین فایل‌های مختلف قابل تکرار است ← IntegrityError و
+    # هشدار نادرست «رسید تکراری است» برای رسیدهای جدید.
+    await conn.execute("DROP INDEX IF EXISTS ux_receipt")
+    await conn.execute("DROP INDEX IF EXISTS ux_receipt2")
     # مدل قدیمی → مدل جدید:
     #   تست ۳ روزه → شروع رایگان (۲ استعلام، یک‌بار مصرف)
     #   پولی قدیمی (notices/case_alerts) → پلن پیشرو تا پایان دوره‌ی فعلی

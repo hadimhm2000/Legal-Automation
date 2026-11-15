@@ -134,6 +134,60 @@ def weekday_fa(d: dt.date) -> str:
     return WEEKDAYS_FA[d.weekday()]
 
 
+# ── تقویم نوبت‌دهی (دستور کارفرما — آبان ۱۴۰۵) ─────────────────────────
+JALALI_MONTHS_FA = ("فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور",
+                    "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند")
+
+# تعطیلات رسمیِ با تاریخ ثابت شمسی (فروردین ۱-۴، ۱۲ و ۱۳؛ ۱۴ و ۱۵ خرداد؛
+# ۲۲ بهمن؛ ۲۹ اسفند). تعطیلات قمری هر سال جابه‌جا می‌شوند و از پیام خطای خودِ
+# سامانه هنگام انتخاب روز تشخیص داده می‌شوند (رد شدن به روز بعد).
+OFFICIAL_HOLIDAYS_JALALI = {
+    (1, 1), (1, 2), (1, 3), (1, 4),   # عید نوروز
+    (1, 12), (1, 13),                 # روز جمهوری اسلامی / سیزده‌بدر
+    (3, 14), (3, 15),                 # رحلت امام خمینی / قیام ۱۵ خرداد
+    (11, 22),                         # پیروزی انقلاب اسلامی
+    (12, 29),                         # ملی شدن صنعت نفت
+}
+
+
+def jalali_of(d: dt.date) -> jdatetime.date:
+    return jdatetime.date.fromgregorian(date=d)
+
+
+def is_off_day(d: dt.date) -> bool:
+    """پنجشنبه/جمعه یا تعطیل رسمی شمسی؟ (دستور کارفرما: این روزها هرگز انتخاب نمی‌شوند)"""
+    if d.weekday() in (3, 4):          # پنجشنبه=۳، جمعه=۴
+        return True
+    j = jalali_of(d)
+    return (j.month, j.day) in OFFICIAL_HOLIDAYS_JALALI
+
+
+def turn_candidate_days(lookahead: int = 14) -> list[dt.date]:
+    """روزهای نامزد نوبت: از «فردا» (نه امروز — دستور کارفرما)، بدون پنجشنبه/جمعه/تعطیل رسمی."""
+    out: list[dt.date] = []
+    cur = today_tehran() + dt.timedelta(days=1)
+    for _ in range(max(lookahead * 3, lookahead + 20)):
+        if len(out) >= max(1, lookahead):
+            break
+        if not is_off_day(cur):
+            out.append(cur)
+        cur += dt.timedelta(days=1)
+    return out
+
+
+def parse_jalali_header(header: str) -> tuple[int, int] | None:
+    """سربرگ تقویم («آبان ۱۴۰۵» / «۱۴۰۵ آبان») ← (سال، ماه)؛ ناخوانا ← None."""
+    t = normalize_fa(header or "")
+    m = re.search(r"(1[34]\d{2})", t)
+    if not m:
+        return None
+    year = int(m.group(1))
+    for i, name in enumerate(JALALI_MONTHS_FA, 1):
+        if name in t:
+            return year, i
+    return None
+
+
 def date_windows(start: dt.date, end: dt.date, days: int = 30) -> list[tuple[dt.date, dt.date]]:
     """بازه‌ی کاربر را به تکه‌های حداکثر `days` روزه (شامل هر دو سر) می‌شکند."""
     if end < start:

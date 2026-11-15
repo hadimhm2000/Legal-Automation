@@ -80,3 +80,32 @@ def test_looks_like_secret():
     assert looks_like_secret("123456")
     assert not looks_like_secret("140513920000890035")
     assert not looks_like_secret("سلام")
+
+
+# ── تقویم نوبت‌دهی (دستور کارفرما — آبان ۱۴۰۵) ────────────────────────────
+def test_parse_jalali_header():
+    from legal_bot.utils import parse_jalali_header
+    assert parse_jalali_header("آبان ۱۴۰۵") == (1405, 8)
+    assert parse_jalali_header("1405 آبان") == (1405, 8)
+    assert parse_jalali_header("فروردین 1404") == (1404, 1)
+    assert parse_jalali_header("اسفند ۱۴۰۳") == (1403, 12)
+    assert parse_jalali_header("") is None
+    assert parse_jalali_header("موردی") is None
+
+
+def test_turn_candidate_days_start_tomorrow_skip_off_days():
+    """از فردا شروع می‌شود؛ پنجشنبه/جمعه/تعطیل رسمی هرگز در فهرست نیست (دستور کارفرما)."""
+    from legal_bot.utils import is_off_day, today_tehran, turn_candidate_days
+    days = turn_candidate_days(14)
+    assert len(days) == 14
+    assert days[0] > today_tehran()          # روز جاری انتخاب نمی‌شود
+    assert all(not is_off_day(d) for d in days)
+    assert all(d.weekday() not in (3, 4) for d in days)   # پنجشنبه/جمعه نه
+    assert days == sorted(days)              # صعودی و بی‌تکرار
+    assert len(set(days)) == len(days)
+    # تعطیل رسمی ثابت: ۲۲ بهمن رد می‌شود
+    from legal_bot.utils import parse_jalali
+    bahman22 = parse_jalali("1404/11/22")
+    assert is_off_day(bahman22)
+    nowruz1 = parse_jalali("1405/01/01")
+    assert is_off_day(nowruz1)
