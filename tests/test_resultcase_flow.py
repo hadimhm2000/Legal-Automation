@@ -62,6 +62,7 @@ async function reload() {
   render();
 }
 document.getElementById('go').onclick = async () => {
+  window.__goClicked = true;
   const r = await fetch('/ResultCase/GetCaseListForPerson', {method: 'POST'});
   if (r.status === 409) {
     document.getElementById('warn').style.display = 'block';
@@ -266,3 +267,24 @@ async def test_work_list_prints_all_pages():
     assert job.pdfs[1][2] == "🖨 نسخه‌ی چاپی صفحه‌ی ۱ از ۲"
     assert job.pdfs[2][2] == "🖨 نسخه‌ی چاپی صفحه‌ی ۲ از ۲"
     assert job.pdfs[0][1] == b"%PDF-1.4"
+
+
+async def test_search_clicks_new_lawyer_jostojo_button():
+    """UI جدید اطلاع‌رسانی پرونده (HTML ارسالی کارفرما — سامانه ابدیت شده): به‌جای
+    کلید «بازیابی»، دکمه‌ی «جستجو» با ng-click="actions.getCaseListForLawyer(...)"
+    زده می‌شود و فهرست پرونده‌ها برمی‌گردد."""
+    html = (_list(CASES[:2])
+            .replace('<button id="go">بازیابی اطلاعات</button>',
+                     '<div class="col-lg-3 col-md-6 mt-3 d-flex justify-content-start align-items-end">'
+                     '<button type="button" class="btn btn-success mt-3" id="go" '
+                     'ng-click="actions.getCaseListForLawyer(viewModel.pageSize,viewModel.pageNumber)" '
+                     'ng-disabled="viewModel.loading">جستجو</button></div>')
+            .replace("GetCaseListForPerson", "GetCaseListForLawyer"))
+
+    async def work(ctx, br, login, page):
+        rc = resultcase.ResultCase(ctx, br, login, page)
+        assert await rc.search(live=True, archived=True) == "found"
+        assert await page.evaluate("window.__goClicked === true")   # خودِ دکمه کلیک شد
+
+    job = await _run(html, "found", work)
+    assert not job.pdfs or job.pdfs                          # بدون خطا؛ استعلام موفق بود

@@ -245,12 +245,19 @@ class ResultCase:
             await asyncio.sleep(config.RC_SVC_RETRY_SEC)
 
     async def _click_search(self) -> int | None:
-        """کلیک «بازیابی اطلاعات» + انتظار برای پاسخ API فهرست (تا پیام کهنه خوانده نشود)."""
+        """کلیک دکمه‌ی استعلام + انتظار برای پاسخ API فهرست (تا پیام کهنه خوانده نشود).
+
+        UI جدید (HTML ارسالی کارفرما — سامانه ابدیت شده): به‌جای کلید «بازیابی»،
+        دکمه‌ی «جستجو» با ng-click="actions.getCaseListForLawyer(...)" زده می‌شود؛
+        اگر نبود، همان دکمه‌ی قدیمی «بازیابی اطلاعات/پرونده»."""
         try:
             async with self.page.expect_response(
                     lambda r: S.RC_GET_LIST_API in r.url and r.request.method == "POST",
                     timeout=20_000) as ri:
-                if not await click_text(self.page, *S.RC_SEARCH, timeout=10_000):
+                ng = self.page.locator(S.RC_SEARCH_NG)
+                if await ng.count() and await visible(ng, timeout=3_000):
+                    await ng.first.click()          # دکمه‌ی «جستجو»ی جدید
+                elif not await click_text(self.page, *S.RC_SEARCH, timeout=10_000):
                     raise FlowError("PARSE_CHANGED", "resultcase search button not found")
             resp = await ri.value
             return resp.status

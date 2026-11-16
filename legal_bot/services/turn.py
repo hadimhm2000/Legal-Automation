@@ -20,10 +20,20 @@
   • خطای «در تنظیمات نوبت دهی ... نمی توان علت مراجعه را ... انتخاب نمود» ←
     «مرحله ی قبلی» ← «فهرست علت ها» ← «ارائه دلائل»؛ باز هم نشد ← «پیگیری پرونده».
   • خطای «طبق تنظیمات انجام شده توسط شعبه، اخذ نوبت برای روزهای X لغایت Y فعال
-    است.» ← روزهای قبل از X رد می‌شوند؛ روزِ بعد از Y (بازه‌ی تمام‌شده) ← «نوبت
-    کامل پر است؛ ۲۴ ساعت دیگر ساعت ۸ صبح اقدام کنید» (دستور کارفرما).
+    است.» ← روزهای قبل از X رد می‌شوند؛ روزِ داخل/بعد از Y (بازه‌ی تمام‌شده) ← «ظرفیت
+    نوبت‌دهی پر می باشد؛ ساعت ۸ صبح روز بعد مجدداً اقدام نمائید» (دستور کارفرما).
   • sweet-alert «هیچ سمتی ... تعریف نشده است»: در مرحله‌ی شماره پرونده/تعیین دادورز ←
-    «امکان نوبت گرفتن نمی باشد»؛ حین ثبت نوبت ← «ظرفیت پر است؛ ۲۴ ساعت دیگر».
+    «امکان نوبت گرفتن نمی باشد»؛ حین ثبت نوبت ← «ظرفیت پر است؛ ساعت ۸ صبح روز بعد».
+
+تقویم جدید سامانه (mds.bootstrap.calendar — HTML ارسالی کارفرما، آبان ۱۴۰۵):
+  • تاریخِ هر سلول در data-number="YYYYMMDD" است؛ روز هدف با تطبیق دقیق همین تاریخ
+    کلیک می‌شود — سلول‌های ماهِ مجاور (data-nm) و روزهای disabled هرگز کلیک نمی‌شوند
+    (باگ: «26»یِ ماهِ گذشته به‌جای «26»یِ ماهِ جاری کلیک می‌شد و روزِ غلط انتخاب می‌شد).
+  • ماهِ نمایش‌داده‌شده از دکمه‌ی انتخاب ماه («آبان - 1405») خوانده می‌شود و جلو رفتن
+    ماه با دکمه‌ی «ماه بعد» (data-changedatebutton) انجام می‌شود.
+  • خطای «با عرض پوزش، ظرفیت نوبت دهی در زمان انتخاب شده تکمیل شده است.» ← همان روز
+    ادامه داده نمی‌شود و مستقیم روزِ بعد انتخاب می‌شود (دستور کارفرما)؛ همین روال تا
+    نمایش «تأیید و چاپ» (ثبت موفق) ادامه می‌یابد.
 """
 from __future__ import annotations
 
@@ -93,6 +103,16 @@ MENU_JS = r"""
 """
 
 # تقویم روزها: سلول‌های td با شماره‌ی روز + سربرگ ماه/سال + دکمه‌ی ماهِ بعد.
+#
+# تقویم جدید سامانه (mds.bootstrap.calendar — HTML ارسالی کارفرما، آبان ۱۴۰۵):
+#   • تاریخ هر سلول در data-number="YYYYMMDD" است ← روز هدف با تطبیق دقیق همین
+#     تاریخ انتخاب می‌شود؛
+#   • سلول‌های ماهِ مجاور (ویژگی data-nm) هرگز کلیک نمی‌شوند — «26»یِ ماهِ گذشته
+#     در DOM پیش از «26»یِ ماهِ جاری است و باگِ انتخابِ روزِ غلط می‌سازد؛
+#   • روزهای غیرقابل انتخاب (گذشته/جمعه/تعطیل) ویژگی disabled دارند؛
+#   • ماهِ نمایش‌داده‌شده در دکمه‌ی #…MonthSelectorButon («آبان - 1405») است — نه در
+#     سربرگِ تاریخِ انتخاب‌شده («دوشنبه، 25 آبان 1405») که با جلو رفتن ماه عوض نمی‌شود؛
+#   • جلو رفتن ماه با دکمه‌ی «ماه بعد» (data-changedatebutton) است.
 # روزهای غیرفعال (disabled/old/past/...) حذف می‌شوند؛ انتخاب همیشه از «فردا» است.
 DAYS_JS = r"""
 () => {
@@ -104,23 +124,41 @@ DAYS_JS = r"""
     if (!vis(el)) return;
     const t = norm(el.innerText);
     if (!/^\d{1,2}$/.test(t) || +t < 1 || +t > 31) return;
+    if (el.hasAttribute('data-nm')) return;    // روزِ ماهِ مجاور (تقویم mds) — هرگز
     const cls = (el.className + ' ' + (el.parentElement ? el.parentElement.className : '')).toLowerCase();
     if (/disabled|old|off|past|holiday|unavailable|text-muted/.test(cls)) return;
+    if (el.hasAttribute('disabled')) return;   // روزهای گذشته/جمعه (تقویم mds)
     if (el.getAttribute('aria-disabled') === 'true') return;
-    el.setAttribute('data-day', String(i));
-    out.cells.push({idx: String(i), day: t});
+    el.setAttribute('data-lb-day', String(i));
+    out.cells.push({idx: String(i), day: t,
+                    number: norm(el.getAttribute('data-number') || '')});
   });
-  for (const el of document.querySelectorAll('th, strong, b, .datepicker-switch, .switch, .uib-title, [role=columnheader]')) {
-    if (!vis(el)) continue;
-    const t = norm(el.innerText || '').replace(/\s+/g, ' ').trim();
-    if (t && /1[34]\d{2}/.test(t) && t.length <= 40) { out.header = t; break; }
+  // ماهِ نمایش‌داده‌شده: اول دکمه‌ی انتخاب ماهِ تقویم mds («آبان - 1405»)؛
+  // وگرنه سربرگ‌های قدیمی (th/strong/... با سال شمسی — تقویم‌های bootstrap).
+  const mbtn = document.querySelector('#mdsBootstrapPersianDatetimePickerMonthSelectorButon');
+  if (mbtn && vis(mbtn)) {
+    const t = norm(mbtn.innerText || '').replace(/\s+/g, ' ').trim();
+    if (t && /1[34]\d{2}/.test(t)) out.header = t;
   }
-  const nextSel = ['th button[ng-click="move(1)"]', '.next', 'th.next',
+  if (!out.header) {
+    for (const el of document.querySelectorAll('th, strong, b, .datepicker-switch, .switch, .uib-title, [role=columnheader]')) {
+      if (!vis(el)) continue;
+      const t = norm(el.innerText || '').replace(/\s+/g, ' ').trim();
+      if (t && /1[34]\d{2}/.test(t) && t.length <= 40) { out.header = t; break; }
+    }
+  }
+  // فلشِ «ماه بعد»: تقویم mds (button[data-changedatebutton] با عنوان «ماه بعد»)
+  // یا انتخابگرهای قدیمی bootstrap — فقط دکمه‌ی فعال و قابل‌مشاهده.
+  const nextSel = ['button[data-changedatebutton][title="ماه بعد"]',
+                   'button[data-changedatebutton][tooltip="ماه بعد"]',
+                   'th button[ng-click="move(1)"]', '.next', 'th.next',
                    'button.next', 'a.next', '.glyphicon-chevron-right', '.glyphicon-chevron-left'];
   for (const sel of nextSel) {
     try {
       for (const el of document.querySelectorAll(sel)) {
-        if (vis(el)) { el.setAttribute('data-lb-next', '1'); out.has_next = true; return out; }
+        if (vis(el) && !el.disabled && el.getAttribute('disabled') === null) {
+          el.setAttribute('data-lb-next', '1'); out.has_next = true; return out;
+        }
       }
     } catch (e) {}
   }
@@ -187,6 +225,13 @@ def _is_range_error(txt: str) -> bool:
     return all(w in t for w in S.RANGE_ERROR_WORDS)
 
 
+def _is_capacity_error(txt: str) -> bool:
+    """«با عرض پوزش، ظرفیت نوبت دهی در زمان انتخاب شده تکمیل شده است.» (HTML
+    ارسالی کارفرما): ظرفیتِ روزِ انتخاب‌شده تمام شده ← مستقیم روزِ بعد."""
+    t = normalize_fa(txt or "")
+    return all(w in t for w in S.CAPACITY_ERROR_WORDS)
+
+
 class Turn:
     def __init__(self, ctx, br, login, page: Page):
         self.ctx, self.br, self.login, self.page = ctx, br, login, page
@@ -246,6 +291,8 @@ class Turn:
         txt = await self._alert_text()
         if not txt:
             return ""
+        if _is_capacity_error(txt):
+            return ""                 # خطای ظرفیت است؛ جداگانه (روزِ بعد) رسیدگی می‌شود
         if "علت مراجعه" in txt or "هیچ سمتی" in txt:
             return ""                 # خطای علت مراجعه/سمت است؛ جداگانه رسیدگی می‌شود
         if any(w in txt for w in S.DAY_BLOCKED_WORDS):
@@ -262,6 +309,13 @@ class Turn:
         if "علت مراجعه" in txt and "نمی توان" in txt and "انتخاب" in txt:
             return txt
         return ""
+
+    async def _capacity_error(self) -> str:
+        """خطای «با عرض پوزش، ظرفیت نوبت دهی در زمان انتخاب شده تکمیل شده است.»
+        (دستور کارفرما — sweet-alert با <h2>، HTML ارسالی): ظرفیتِ همین روز تمام
+        شده ← مستقیم روزِ بعد؛ ساعتِ بعدیِ همان روز امتحان نمی‌شود."""
+        txt = await self._alert_text()
+        return txt if _is_capacity_error(txt) else ""
 
     async def _range_error(self) -> str:
         """خطای بازه‌ی فعال نوبت‌دهی شعبه (ضبط steps 2 — دستور کارفرما):
@@ -294,8 +348,8 @@ class Turn:
 
         روزِ قبل از شروعِ بازه → True (این روز رد شود؛ پیاده‌رویِ دونه‌دونه از
         روزِ شروعِ بازه ادامه می‌یابد)؛ روزِ داخل/بعد از پایانِ بازه ← کلِ بازه‌ی
-        فعال امتحان/پر شده ← پرش TURN_CAPACITY_FULL: «کامل پر است؛ ۲۴ ساعت دیگر
-        ساعت ۸ صبح اقدام کنید»."""
+        فعال امتحان/پر شده ← پرش TURN_CAPACITY_FULL: «کامل پر است؛ ساعت ۸ صبح
+        روز بعد مجدداً اقدام نمائید»."""
         await self._close_alert()
         start, end = self._parse_active_range(txt)
         self._active_range = (start, end)
@@ -588,10 +642,25 @@ class Turn:
         return True
 
     # ── تقویم: انتخاب روزِ هدف (از فردا؛ بدون پنجشنبه/جمعه/تعطیل) ───────
+    async def _click_day_cell(self, idx: str):
+        """کلیک سلولِ روز با برچسبِ data-lb-day (برچسبِ خودِ ربات است؛ data-day
+        متعلق به خودِ تقویم mds است و دست نمی‌خورد)."""
+        await self.page.evaluate(DAYS_JS)          # تازه‌سازی برچسب data-lb-day
+        await self.page.locator(f'[data-lb-day="{idx}"]').first.click()
+        await human_pause(self.page, 1800)
+
     async def _select_day(self, target: dt.date) -> bool:
         """روز هدف در تقویم کلیک می‌شود؛ اگر ماهِ نمایش‌داده‌شده عقب‌تر بود، با فلشِ
-        «ماه بعد» جلو می‌رود. خروجی False = چنین روزی قابل انتخاب نبود."""
+        «ماه بعد» جلو می‌رود. خروجی False = چنین روزی قابل انتخاب نبود.
+
+        تقویم mds (HTML ارسالی کارفرما): هر سلول data-number="YYYYMMDD" دارد و
+        روزِ هدف با تطبیق دقیق همین تاریخ پیدا می‌شود — سلول‌های ماهِ مجاور
+        (data-nm) و روزهای disabled از قبل در DAYS_JS حذف شده‌اند؛ بنابراین
+        «26»یِ ماهِ گذشته هرگز به‌جای «26»یِ ماهِ جاری کلیک نمی‌شود. برای تقویم‌های
+        قدیمی (بدون data-number) همان تطبیقِ شماره‌ی روز در ماهِ نمایش‌داده‌شده است.
+        """
         tj = jalali_of(target)
+        want = f"{tj.year:04d}{tj.month:02d}{tj.day:02d}"   # data-number هدف
         for _ in range(26):                      # حداکثر ۲۶ ماه جلو رفتن
             info = await self.page.evaluate(DAYS_JS)
             shown = parse_jalali_header(info.get("header") or "")
@@ -606,22 +675,25 @@ class Turn:
         shown = parse_jalali_header(info.get("header") or "")
         if shown and (shown[0], shown[1]) != (tj.year, tj.month):
             return False                         # به ماهِ روزِ هدف نرسیدیم
-        for c in info["cells"]:
-            if int(c["day"]) == tj.day:
-                await self.page.evaluate(DAYS_JS)   # تازه‌سازی data-day
-                await self.page.locator(f'[data-day="{c["idx"]}"]').first.click()
-                await human_pause(self.page, 1800)
+        for c in info["cells"]:                  # ۱) تقویم mds: تطبیق دقیق data-number
+            if c.get("number") == want:
+                await self._click_day_cell(c["idx"])
+                return True
+        for c in info["cells"]:                  # ۲) تقویم قدیمی: شماره‌ی روز
+            if not c.get("number") and int(c["day"]) == tj.day:
+                await self._click_day_cell(c["idx"])
                 return True
         return False
 
     async def _wait_turn_table(self):
-        """صبر تا جدول ساعت‌های روز لود شود یا پیام خطای روز/علت مراجعه/بازه بیاید."""
+        """صبر تا جدول ساعت‌های روز لود شود یا پیام خطای روز/ظرفیت/علت مراجعه/بازه بیاید."""
         async def _has_times() -> bool:
             return bool(await self.page.evaluate(TIMES_JS))
 
         await wait_first({
             "times": _has_times,
             "error": self._day_error,
+            "capacity": self._capacity_error,
             "reason": self._reason_error,
             "range": self._range_error,
         }, timeout_ms=12_000)
@@ -643,18 +715,33 @@ class Turn:
                 continue
         return await click_text(self.page, *S.TURN_YES, timeout=6_000)
 
-    async def _try_slots(self, target: dt.date, tries: int) -> tuple[str | None, int]:
+    async def _read_create_error(self, timeout_s: float = 4.0) -> str:
+        """متن هشدارِ بعد از ثبتِ ناموفق — sweet-alert ممکن است چند لحظه بعد از
+        پاسخِ خطای API باز شود؛ تا چند ثانیه فرصت خواندن داده می‌شود."""
+        loop = asyncio.get_running_loop()
+        end = loop.time() + timeout_s
+        while loop.time() < end:
+            txt = await self._alert_text()
+            if txt:
+                return txt
+            await asyncio.sleep(0.3)
+        return ""
+
+    async def _try_slots(self, target: dt.date, tries: int) -> tuple[str | None, int, bool]:
         """ساعت‌های آزادِ همین روز را به‌ترتیب امتحان می‌کند (دستور کارفرما:
         دونه‌دونه روزها/ساعت‌ها تا پیدا شدن نوبتِ خالی — ضبط steps 2).
 
         ساعت‌های «تکمیل ظرفیت» (کلاس disable / State==2) هرگز کلیک نمی‌شوند.
-        خروجی: (متن نوبتِ ثبت‌شده یا None، تعداد تلاش‌های مصرف‌شده).
+        خطای «ظرفیت نوبت دهی در زمان انتخاب شده تکمیل شده است» ← همین روز رها
+        می‌شود و مستقیم روزِ بعد می‌رویم (دستور کارفرما) — ساعتِ بعدیِ همان روز
+        امتحان نمی‌شود و از سهمیه‌ی تلاش‌ها هم کم نمی‌شود (خطای روز است، نه ساعت).
+        خروجی: (متن نوبتِ ثبت‌شده یا None، تعداد تلاش‌های مصرف‌شده، ظرفیتِ روز پر؟).
         """
         slots = await self.page.evaluate(TIMES_JS)
         free = [s for s in slots if not s.get("full")]
         for t in free:
             if tries >= config.TURN_MAX_SLOT_TRIES:
-                return None, tries
+                return None, tries, False
             tries += 1
             await self.page.evaluate(TIMES_JS)      # تازه‌سازی برچسب data-time
             with contextlib.suppress(Exception):
@@ -671,19 +758,26 @@ class Turn:
             await human_pause(self.page, 2000)
             if status == 200 or "#/Detail" in self.page.url:
                 return (f"روز {fa_date(target)} ({weekday_fa(target)}) ساعت {to_fa_digits(t['time'])}",
-                        tries)
+                        tries, False)
             # متن هشدارِ خطا قبل از بستن خوانده می‌شود (مثل خطای بازه‌ی فعال — steps 2)
-            self._last_create_error = await self._alert_text()
+            self._last_create_error = await self._read_create_error()
             await click_text(self.page, *S.TURN_CLOSE, timeout=4000)
-        return None, tries
+            # «با عرض پوزش، ظرفیت نوبت دهی در زمان انتخاب شده تکمیل شده است.»
+            # ← مستقیم روزِ بعد (دستور کارفرما — HTML ارسالی)
+            if _is_capacity_error(self._last_create_error):
+                log.info("turn day %s capacity full at %s", target, t['time'])
+                return None, tries - 1, True
+        return None, tries, False
 
     async def book(self) -> str:
         """روز و ساعتِ اولین نوبتِ خالی (دستور کارفرما — آبان ۱۴۰۵):
 
         از «فردا» شروع می‌شود (روز جاری انتخاب نمی‌شود)؛ پنجشنبه/جمعه/تعطیل رسمی رد
-        می‌شود؛ روزها دونه‌دونه چک می‌شوند (ضبط steps 2)؛ خطای علت مراجعه ←
-        «ارائه دلائل» و سپس «پیگیری پرونده»؛ خطای «طبق تنظیمات شعبه... فعال است» ←
-        روزهای قبل از شروعِ بازه رد و پایانِ بازه ← «کامل پر؛ ۲۴ ساعت دیگر ساعت ۸ صبح».
+        می‌شود؛ روزها دونه‌دونه چک می‌شوند تا «تأیید و چاپ» (ثبتِ موفق) نمایش داده
+        شود؛ خطای علت مراجعه ← «ارائه دلائل» و سپس «پیگیری پرونده»؛ خطای «ظرفیت
+        نوبت دهی در زمان انتخاب شده تکمیل شده» ← مستقیم روزِ بعد؛ خطای «طبق
+        تنظیمات شعبه... فعال است» ← روزهای قبل از شروعِ بازه رد و داخل/بعد از بازه
+        ← «ظرفیت پر؛ ساعت ۸ صبح روز بعد مجدداً اقدام نمائید» (دستور کارفرما).
         """
         await self.job.ask_choice(T.TURN_BOOK_CONFIRM, [("ok", "✅ بله، ثبت کن")])
         tries = 0
@@ -692,6 +786,7 @@ class Turn:
         while i < len(days):
             target = days[i]
             i += 1
+            self._last_create_error = ""        # هشدارِ روزِ قبلی خوانده نشود
             # بازه‌ی فعالِ شعبه معلوم شده و این روز قبل از شروعِ آن است ← رد
             ar_start = self._active_range[0]
             if ar_start and target < ar_start:
@@ -706,15 +801,23 @@ class Turn:
                     log.info("turn day %s blocked: %s", target, err[:150])
                     await self._close_alert()
                     break
+                cap = await self._capacity_error()
+                if cap:
+                    # «ظرفیت نوبت دهی ... تکمیل شده است» ← مستقیم روزِ بعد (دستور کارفرما)
+                    log.info("turn day %s capacity full: %s", target, cap[:150])
+                    await self._close_alert()
+                    break
                 rng = await self._range_error()
                 if rng and await self._handle_range_error(rng, target):
                     break                  # روز قبل از شروعِ بازه‌ی فعال بود ← روزهای بعدی
                 if await self._reason_error():
                     await self._fix_reason_error_if_any()
                     continue               # علت مراجعه اصلاح شد ← دوباره همین روز
-                when, tries = await self._try_slots(target, tries)
+                when, tries, day_full = await self._try_slots(target, tries)
                 if when:
                     return when
+                if day_full:
+                    break                  # ظرفیت این روز تکمیل شد ← مستقیم روزِ بعد
                 if tries >= config.TURN_MAX_SLOT_TRIES:
                     raise FlowError("NO_SLOT", "slot tries exhausted",
                                     "⚠️ چند نوبت پشت سر هم پذیرفته نشد؛ کمی بعد دوباره امتحان کنید.")
