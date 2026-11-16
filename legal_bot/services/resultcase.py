@@ -206,9 +206,14 @@ class ResultCase:
 
     async def _search_once(self, live, archived, case_no, date_from, date_to) -> str:
         await self.ensure()
+        await self._wait_form_ready()
         if case_no is not None:
             box = self.page.locator(S.RC_CASE_NO).first
             await box.wait_for(state="visible", timeout=15_000)
+            # فیلدهای فرم هنگام لود سامانه disabled می‌شوند (ng-disabled="viewModel.loading")؛
+            # بدون این صبر، کلیک روی فیلدِ غیرفعال تا ۲۰ ثانیه معطل و بعد کرش می‌کند.
+            if not await self._wait_enabled(box, timeout_ms=15_000):
+                raise _SvcDelay()
             await box.click()
             await box.fill(case_no)
         if date_from is not None:
@@ -247,24 +252,122 @@ class ResultCase:
     async def _click_search(self) -> int | None:
         """کلیک دکمه‌ی استعلام + انتظار برای پاسخ API فهرست (تا پیام کهنه خوانده نشود).
 
-        UI جدید (HTML ارسالی کارفرما — سامانه ابدیت شده): به‌جای کلید «بازیابی»،
-        دکمه‌ی «جستجو» با ng-click="actions.getCaseListForLawyer(...)" زده می‌شود؛
-        اگر نبود، همان دکمه‌ی قدیمی «بازیابی اطلاعات/پرونده»."""
+        UI جدید (HTML ارسالی کارفرما — سامانه ابدیت شده): دکمه‌ی «جستجو» با
+        ng-click="actions.getCaseListForLawyer(...)" و ng-disabled="viewModel.loading"؛
+        برای وکلا و اشخاص حقیقی. اگر دکمه پیدا شد ولی در «loading» گیر کرد،
+        ریلود و تکرار کل جستجو (_SvcDelay) — نه تایم‌اوت ۲۰ ثانیه‌ای کلیک."""
+        btn = await self._find_search_button()
+        if btn is None:
+            raise FlowError("PARSE_CHANGED", "resultcase search button not found")
+        if not await self._wait_enabled(btn, timeout_ms=15_000):
+            raise _SvcDelay()   # دکمه در حالت loading گیر کرده → ریلود و از ابتدا
         try:
             async with self.page.expect_response(
                     lambda r: S.RC_GET_LIST_API in r.url and r.request.method == "POST",
                     timeout=20_000) as ri:
-                ng = self.page.locator(S.RC_SEARCH_NG)
-                if await ng.count() and await visible(ng, timeout=3_000):
-                    await ng.first.click()          # دکمه‌ی «جستجو»ی جدید
-                elif not await click_text(self.page, *S.RC_SEARCH, timeout=10_000):
-                    raise FlowError("PARSE_CHANGED", "resultcase search button not found")
+                await btn.click(timeout=8_000)
             resp = await ri.value
             return resp.status
-        except FlowError:
+        except _SvcDelay:
             raise
         except Exception:
             return None   # دکمه کلیک شد ولی پاسخ API دیده نشد
+
+    async def _wait_form_ready(self, timeout_ms: int = 30_000):
+        """صبر تا فرم جستجو واقعاً رندر و فعال شود.
+
+        AngularJS فرم را ممکن است چند ثانیه بعد از لود صفحه تزریق کند؛ قبلاً استعلامِ
+        بی‌شماره‌ی پرونده (A/B/C) روی فرمِ هنوز نیامده «دکمه پیدا نشد» می‌داد. اگر فرم
+        پیدا شد ولی فیلدهایش غیرفعال ماندند (viewModel.loading گیر کرده) → ریلود و از ابتدا."""
+        async def field_ready() -> bool:
+            for sel in (S.RC_CASE_NO, S.RC_LIVE, S.RC_ARCHIVED):
+                try:
+                    el = self.page.locator(sel).first
+                    if await el.is_visible() and await el.is_enabled():
+                        return True
+                except Exception:
+                    pass
+            return False
+
+        async def field_disabled() -> bool:
+            for sel in (S.RC_CASE_NO, S.RC_LIVE, S.RC_ARCHIVED):
+                try:
+                    el = self.page.locator(sel).first
+                    if await el.is_visible() and not await el.is_enabled():
+                        return True
+                except Exception:
+                    pass
+            return False
+
+        state = await wait_first({"ready": field_ready}, timeout_ms=timeout_ms)
+        if state == "ready":
+            return
+        # فرم در مهلت مقرر آماده نشد: اگر دیده شده ولی فیلدهایش غیرفعال مانده‌اند،
+        # یعنی viewModel.loading گیر کرده → ریلود و تکرار؛ وگرنه ساختار صفحه عوض شده.
+        if await field_disabled():
+            raise _SvcDelay()
+        raise FlowError("PARSE_CHANGED", "resultcase search form not found")
+
+    async def _find_search_button(self, timeout_ms: int = 12_000):
+        """اولین دکمه‌ی استعلامِ «قابل‌مشاهده» — به ترتیب:
+
+        ۱) دکمه‌ی «جستجو»ی جدید (ng-click*=getCaseList — HTML ارسالی کارفرما)؛
+        ۲) دکمه‌ی قدیمی «بازیابی اطلاعات/پرونده»؛
+        ۳) متن دقیق «جستجو» (وقتی ng-click باز هم عوض شده باشد).
+
+        نکته: کورکورانه .first نمی‌گیریم — قالب‌های مخفی AngularJS (ng-if و…)
+        می‌توانند اولین match را مخفی کنند؛ همین باعث «search button not found»
+        می‌شد. فقط موردِ نمایان برگردانده می‌شود."""
+        loop = asyncio.get_running_loop()
+        end = loop.time() + timeout_ms / 1000
+        while True:
+            try:                                   # ۱) سلکتور ng-click جدید
+                loc = self.page.locator(S.RC_SEARCH_NG)
+                for i in range(await loc.count()):
+                    el = loc.nth(i)
+                    if await el.is_visible():
+                        return el
+            except Exception:
+                pass
+            el = await self._first_visible_by_text(S.RC_SEARCH)          # ۲) متن قدیمی
+            if el is not None:
+                return el
+            el = await self._first_visible_by_text(S.RC_SEARCH_NEW_TEXT,  # ۳) متن جدید
+                                                    exact=True)
+            if el is not None:
+                return el
+            if loop.time() >= end:
+                return None
+            await asyncio.sleep(0.4)
+
+    async def _first_visible_by_text(self, words, exact: bool = False):
+        """اولین دکمه/لینک نمایان با یکی از متن‌ها (exact: فقط خودِ متن، نه شامل آن)."""
+        pat = text_re(*words)
+        if exact:
+            pat = re.compile(r"^\s*(?:" + pat.pattern + r")\s*$")
+        for role in ("button", "link"):
+            try:
+                cand = self.page.get_by_role(role, name=pat)
+                for i in range(await cand.count()):
+                    el = cand.nth(i)
+                    if await el.is_visible():
+                        return el
+            except Exception:
+                continue
+        return None
+
+    async def _wait_enabled(self, el, timeout_ms: int) -> bool:
+        """صبر تا عنصر فعال شود (ng-disabled="viewModel.loading" هنگام لود سامانه)."""
+        loop = asyncio.get_running_loop()
+        end = loop.time() + timeout_ms / 1000
+        while loop.time() < end:
+            try:
+                if await el.is_enabled():
+                    return True
+            except Exception:
+                return False   # عنصر از DOM رفت
+            await asyncio.sleep(0.4)
+        return False
 
     async def _messages(self, page) -> dict:
         try:
@@ -315,6 +418,9 @@ class ResultCase:
         el = self.page.locator(sel).first
         if not await visible(el, timeout=8_000):
             raise FlowError("PARSE_CHANGED", f"date input {sel} not found")
+        # فیلد تاریخ هم ng-disabled دارد (viewModel.loading) — صبر تا فعال شود
+        if not await self._wait_enabled(el, timeout_ms=10_000):
+            raise _SvcDelay()
         with contextlib.suppress(Exception):
             await el.click()
             await el.fill(val)

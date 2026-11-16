@@ -99,10 +99,13 @@ RC_CASE_NO = "#txtHstCaseNo"                                  # ✅
 # ✅ دکمه‌ی استعلام: UI قدیمی «بازیابی اطلاعات/پرونده» — برای وقتی دکمه‌ی جدید نیست
 RC_SEARCH = ["بازیابی اطلاعات", "بازیابی پرونده"]               # ✅ (استعلام)
 # ✅ دکمه‌ی «جستجو»ی جدید اطلاع‌رسانی پرونده (HTML ارسالی کارفرما — سامانه ابدیت شده):
-# <button ng-click="actions.getCaseListForLawyer(viewModel.pageSize,viewModel.pageNumber)">جستجو</button>
-# به‌جای کلید «بازیابی» زده می‌شود؛ برای بخش وکلا (و صورتِ مشابهِ اشخاص حقیقی).
-RC_SEARCH_NG = ('button[ng-click*="getCaseListForLawyer"], '
-                'button[ng-click*="getCaseListForPerson"]')
+# <button ng-click="actions.getCaseListForLawyer(viewModel.pageSize,viewModel.pageNumber)"
+#          ng-disabled="viewModel.loading">جستجو</button>
+# برای بخش وکلا؛ صورت مشابه برای اشخاص حقیقی. «ng-click*=getCaseList» هر دو بخش و
+# هر تغییر پسوند (ForLawyer/ForPerson/…) را می‌گیرد — دکمه/لینک، نه قالب‌های مخفی.
+RC_SEARCH_NG = 'button[ng-click*="getCaseList"], a[ng-click*="getCaseList"]'
+# متن دقیق دکمه‌ی جدید («جستجو») — fallback نهایی وقتی ng-click باز هم عوض شده باشد
+RC_SEARCH_NEW_TEXT = ["جستجو"]
 RC_VIEW = ["مشاهده"]                                          # ✅ → تب CaseListWithPasswordByCaseNo
 RC_CASE_INFO = '[ng-bind-html="viewModel.caseInfo"]'          # ✅ از HTML ارسالی کارفرما
 RC_PRINT = ["نسخه چاپی"]                                      # ✅ → Reports/PrintResultCase

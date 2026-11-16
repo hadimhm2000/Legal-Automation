@@ -288,3 +288,149 @@ async def test_search_clicks_new_lawyer_jostojo_button():
 
     job = await _run(html, "found", work)
     assert not job.pdfs or job.pdfs                          # بدون خطا؛ استعلام موفق بود
+
+
+# ── باگ رفع‌شده (لاگ ۱۶ نوامبر ۲۰۲۶ — «resultcase search button not found») ──
+# عین HTML ارسالی کارفرما + تله‌های صفحه‌ی واقعی سامانه.
+
+REAL_FORM_TMPL = """<html><head><meta charset="utf-8"></head><body>
+<div class="card bg-fade-light"><div class="card-body p-4"><div class="row">
+__HIDDEN__
+<div class="col-lg-3 col-md-6">
+  <label>شماره پرونده<span class="text-red ms-1 text-w-700">*</span></label>
+  <input type="text" class="form-control text-end" name="txtHstCaseNo" id="txtHstCaseNo"
+         pattern="[0123456789٠١٢٣٤٥٦٧٨٩]+$" maxlength="20"
+         ng-disabled="viewModel.loading" ng-model="viewModel.caseNo">
+</div>
+<div class="col-lg-3 col-md-6">
+  <jud-datepicker id="saveFromDate" name="saveFromDate" locale="fa" ng-model="viewModel.fromDate">
+    <div class="input-group input-group-sm" dir="ltr">
+      <input type="text" class="form-control border-0" name="saveFromDate" ng-model="model"
+             persian-datepicker-popup="" maxlength="10" placeholder="" readonly>
+    </div>
+  </jud-datepicker>
+</div>
+<div class="col-lg-3 col-md-6">
+  <jud-datepicker id="saveToDate" name="saveToDate" locale="fa" ng-model="viewModel.toDate">
+    <div class="input-group input-group-sm" dir="ltr">
+      <input type="text" class="form-control border-0" name="saveToDate" ng-model="model"
+             persian-datepicker-popup="" maxlength="10" placeholder="" readonly>
+    </div>
+  </jud-datepicker>
+</div>
+<div class="col-lg-3 col-md-6 mt-3">
+  <div class="box-check-radio box-style-check">
+    <input type="checkbox" name="archivedCase" id="archivedCase" ng-model="viewModel.archivedCase">
+    <label for="archivedCase" class="rounded py-2"><span class="d-flex align-items-center">
+      <p class="mb-0">مختومه شده‌</p></span></label>
+  </div>
+</div>
+<div class="col-lg-3 col-md-6 mt-3">
+  <div class="box-check-radio box-style-check">
+    <input type="checkbox" name="liveCase" id="liveCase" ng-model="viewModel.liveCase">
+    <label for="liveCase" class="rounded py-2"><span class="d-flex align-items-center">
+      <p class="mb-0">مختومه نشده‌</p></span></label>
+  </div>
+</div>
+<div class="col-lg-3 col-md-6 mt-3 d-flex justify-content-start align-items-end">
+  <button type="button" class="btn btn-success mt-3"
+          ng-click="actions.getCaseListForLawyer(viewModel.pageSize,viewModel.pageNumber)"
+          ng-disabled="viewModel.loading"><!-- ngIf: viewModel.loading -->جستجو</button>
+</div>
+</div></div></div>
+<div id="res" style="display:none">
+  <div id="cards"></div>
+</div>
+<script>
+const CASES = __CASES__;
+function render() {
+  document.getElementById('cards').innerHTML = CASES.map(c => `<div class="card">
+    <p>شماره پرونده: ${c.no} ردیف فرعی: ${c.sub} شماره بایگانی: ${c.arch} شعبه: ${c.br}</p>
+    <span onclick="window.open('/ResultCase/CaseListWithPasswordByCaseNo?x=${c.no}${c.sub}')">مشاهده</span>
+  </div>`).join('');
+  document.getElementById('res').style.display = 'block';
+}
+__ARM__
+</script>
+</body></html>"""
+
+
+def _real_form(cases, hidden_first=False, delay_ms=0):
+    import json
+    hidden = ('<button type="button" style="display:none" '
+              'ng-click="actions.getCaseListForLawyer(viewModel.pageSize,viewModel.pageNumber)">'
+              'جستجو</button>') if hidden_first else ""
+    if delay_ms:
+        arm = f"""
+const host = document.querySelector('.card .row');
+const inner = host.innerHTML;
+host.innerHTML = '';
+setTimeout(() => {{ host.innerHTML = inner; armButton(); }}, {delay_ms});
+"""
+    else:
+        arm = "armButton();"
+    arm += """
+function armButton() {
+  const btn = Array.from(document.querySelectorAll('button'))
+      .filter(b => b.offsetParent !== null)   // فقط دکمه‌ی نمایان (نه قالب مخفی)
+      .find(b => (b.innerText || '').trim() === 'جستجو');
+  btn.addEventListener('click', async () => {
+    window.__goClicked = true;
+    btn.disabled = true;                       // ng-disabled="viewModel.loading"
+    await new Promise(r => setTimeout(r, 1500));
+    const r = await fetch('/ResultCase/GetCaseListForLawyer', {method: 'POST'});
+    btn.disabled = false;
+    render();
+  });
+}
+"""
+    return (REAL_FORM_TMPL
+            .replace("__HIDDEN__", hidden)
+            .replace("__CASES__", json.dumps(cases))
+            .replace("__ARM__", arm))
+
+
+async def test_search_survives_hidden_template_button():
+    """تله‌ی ۱: قالب مخفیِ هم‌شکل قبل از دکمه‌ی واقعی (ng-if انگولار) — قبلاً
+    کورکورانه .first گرفته می‌شد، دکمه‌ی مخفی انتخاب می‌شد و «search button
+    not found» می‌داد. حالا اولین دکمه‌ی «نمایان» کلیک می‌شود."""
+    html = _real_form(CASES[:2], hidden_first=True)
+
+    async def work(ctx, br, login, page):
+        rc = resultcase.ResultCase(ctx, br, login, page)
+        assert await rc.search(live=True, archived=True) == "found"
+        assert await page.evaluate("window.__goClicked === true")
+
+    await _run(html, "found", work)
+
+
+async def test_search_waits_for_late_rendered_form():
+    """تله‌ی ۲: AngularJS فرم را با تاخیر تزریق می‌کند — استعلامِ بی‌شماره‌ی پرونده
+    (A/B/C) قبلاً روی فرمِ نیامده «دکمه پیدا نشد» می‌داد؛ حالا صبر می‌کند."""
+    html = _real_form(CASES[:2], delay_ms=1500)
+
+    async def work(ctx, br, login, page):
+        rc = resultcase.ResultCase(ctx, br, login, page)
+        assert await rc.search(live=True, archived=True) == "found"
+        assert await page.evaluate("window.__goClicked === true")
+        # چک‌باکس‌ها روی فرمِ واقعی (نه فرمِ نیامده) تنظیم شدند
+        assert await page.locator("#liveCase").is_checked()
+        assert await page.locator("#archivedCase").is_checked()
+
+    await _run(html, "found", work)
+
+
+async def test_set_date_on_readonly_jud_datepicker():
+    """تله‌ی ۳: فیلدهای تاریخ jud-datepicker فقط‌خواندنی‌اند — مقدار با JS و
+    رویدادهای AngularJS نوشته می‌شود (عین HTML ارسالی کارفرما)."""
+    import datetime as dt
+    html = _real_form(CASES[:2])
+
+    async def work(ctx, br, login, page):
+        rc = resultcase.ResultCase(ctx, br, login, page)
+        await rc._set_date('input[name="saveFromDate"]', dt.date(2025, 1, 1))
+        await rc._set_date('input[name="saveToDate"]', dt.date(2025, 8, 16))
+        assert await page.locator('input[name="saveFromDate"]').input_value() == "1403/10/12"
+        assert await page.locator('input[name="saveToDate"]').input_value() == "1404/05/25"
+
+    await _run(html, "found", work)
