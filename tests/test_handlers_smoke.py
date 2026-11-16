@@ -166,6 +166,7 @@ async def test_turn_invoice_and_admin_approval(env, db):
     await send(bot, dp, f"/start {make_token(ADMIN, 'hs')}")
     await send(bot, dp, T.M_TURN)
     await press(bot, dp, button(sess, "شماره بایگانی"))
+    await press(bot, dp, button(sess, "ثبت نوبت تکی"))   # تکی/چند نوبت (دستور کارفرما — آبان ۱۴۰۵)
     await send(bot, dp, "0500732")
     inv = await db.one("SELECT * FROM invoices WHERE kind='turn'")
     assert inv["amount_toman"] == 70_000 and inv["payload"] == "archive:0500732"
@@ -179,6 +180,22 @@ async def test_turn_invoice_and_admin_approval(env, db):
     assert button(sess, "شروع ثبت نوبت") == f"turn:go:{inv['code']}"
     await press(bot, dp, f"adm:ok:{inv['code']}")       # تأیید دوباره بی‌اثر
     assert (await db.one("SELECT status FROM invoices WHERE code=?", (inv["code"],)))["status"] == "approved"
+
+
+async def test_turn_multi_invoice_amount_and_payload(env, db):
+    """«ثبت چند نوبت» (دستور کارفرما — آبان ۱۴۰۵): فاکتور = قیمت هر نوبت × تعداد
+    و همه‌ی شماره‌ها در payload فاکتور می‌مانند؛ شماره‌ی نامعتبر رد می‌شود."""
+    bot, dp, sess = env
+    await send(bot, dp, f"/start {make_token(ADMIN, 'hs')}")
+    await send(bot, dp, T.M_TURN)
+    await press(bot, dp, button(sess, "شماره بایگانی"))
+    await press(bot, dp, button(sess, "ثبت چند نوبت"))
+    await send(bot, dp, "0500732، 12")                  # شماره‌ی دوم نامعتبر
+    assert "معتبر نیستند" in sess.texts()[-1]           # بدون ساخت فاکتور، دوباره پرسیده می‌شود
+    await send(bot, dp, "0500732، 0501667\n0304293")    # سه شماره با جداکننده‌های مختلف
+    inv = await db.one("SELECT * FROM invoices WHERE kind='turn'")
+    assert inv["amount_toman"] == config.PRICE_TURN * 3
+    assert inv["payload"] == "archive:0500732,0501667,0304293"
 
 
 async def send_photo(bot, dp, file_id, fuid):

@@ -112,20 +112,22 @@ async def test_no_unique_index_on_receipt_file_unique_id(db):
     assert not idx
 
 
-async def test_otp_resend_cooldown_persisted_in_db(db):
-    """قفل ۳ ساعته‌ی «ارسال رمز موقت» در دیتابیس می‌ماند (دستور کارفرما)."""
+async def test_otp_resend_marked_in_db(db):
+    """زمان ارسال دستیِ «ارسال رمز موقت» در دیتابیس ثبت می‌ماند (گزارش مدیر).
+
+    (دستور کارفرما — آبان ۱۴۰۵: نمایش دکمه‌ی ارسال فقط به پیامِ «رمز موقت جدید
+    ... ارسال شد» خودِ سامانه بستگی دارد؛ این ثبت فقط برای گزارش است.)"""
     import time
 
     from legal_bot.services import sana_login as sl
 
     sl._OTP_RESEND_RAM.clear()
     ctx = types.SimpleNamespace(db=db)
-    assert await sl.otp_resend_allowed(ctx, 7)
+    assert not (await db.get_setting("otp_resend:7"))
+    before = time.time()
     await sl.otp_mark_resend(ctx, 7)
-    assert not await sl.otp_resend_allowed(ctx, 7)
-    sl._OTP_RESEND_RAM.clear()                 # RAM پاک شد → از دیتابیس خوانده می‌شود
-    assert not await sl.otp_resend_allowed(ctx, 7)
-    # بعد از ۳ ساعت دوباره مجاز است
-    await db.set_setting("otp_resend:7", str(time.time() - 3 * 3600 - 60))
-    assert await sl.otp_resend_allowed(ctx, 7)
+    saved = float(await db.get_setting("otp_resend:7"))
+    assert before <= saved <= time.time()
+    sl._OTP_RESEND_RAM.clear()                 # RAM پاک شد → مهر زمانی در دیتابیس مانده
+    assert float(await db.get_setting("otp_resend:7")) == saved
     sl._OTP_RESEND_RAM.clear()

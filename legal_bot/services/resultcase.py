@@ -156,7 +156,12 @@ class ResultCase:
         self.home_url = page.url
 
     async def ensure(self):
+        before = self.page
         self.page = await self.login.ensure(self.page)
+        if self.page is not before:
+            # بازیابی از صفحه‌ی خطای سامانه (Login/ErrorPage — دستور کارفرما):
+            # تبِ خراب بسته شده و تبِ تازه جایگزین شده؛ آدرس خانه هم تازه می‌شود.
+            self.home_url = self.page.url
 
     async def reload(self):
         with contextlib.suppress(Exception):

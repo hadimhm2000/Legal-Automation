@@ -1,7 +1,11 @@
 """جریان واقعی SanaLogin روی یک سایت ساختگی (Playwright route) — بدون اینترنت.
 
 سناریو‌ها: رمز شخصی اشتباه ← کپچا ← رمز درست ← «ارسال رمز موقت» ← رمز موقت اشتباه
-(ارسال مجدد خودکار + پیام) ← رمز درست ← ورود. و: رمز شخصی اشتباه تا سقف ← توقف.
+← رمز درست ← ورود. و: رمز شخصی اشتباه تا سقف ← توقف.
+
+دستور کارفرما (آبان ۱۴۰۵ — ضبط steps 3): دکمه‌ی «ارسال رمز موقت» فقط وقتی نمایش
+داده می‌شود که پیامِ «رمز موقت جدید ... ارسال شد» خودِ سامانه روی صفحه نباشد؛
+و صفحه‌ی خطای Login/ErrorPage (آبان ۱۴۰۵): تب بسته و دوباره از گزینه‌ی قبلی.
 """
 import asyncio
 import base64
@@ -28,15 +32,17 @@ LOGIN = """<html><body><form onsubmit="return false">
 <input id=personNationalCode><input id=personUserPassword type=password>
 <div id=cap style="display:none"><img src="/Login/GetCaptchaImage" width=100 height=30><input id=captcha></div>
 <div id=otpbox style="display:none"><input id=otpPassowrd>
- <span id=resend onclick="fetch('/Login/SendOtpPasswordForPerson',{method:'POST'})">ارسال مجدد رمز موقت</span></div>
+<p id=otpauto style="display:none">رمز موقت جدید برای شماره همراه شما ارسال شد. پس از دریافت، جهت ورود از رمز موقت جدید استفاده نمایید.</p>
+ <span id=resend onclick="fetch('/Login/SendOtpPasswordForPerson',{method:'POST'});document.getElementById('otpauto').style.display='block'">ارسال مجدد رمز موقت</span></div>
 <div id=err></div></form>
 <script>
 const $ = s => document.querySelector(s);
+const AUTO = __AUTO__;
 $('#personUserPassword').addEventListener('keydown', async e => {
   if (e.key !== 'Enter') return;
   const r = await fetch('/Login/CheckPersonLogin', {method: 'POST', body: JSON.stringify({
      nc: $('#personNationalCode').value, pw: $('#personUserPassword').value, cap: $('#captcha').value})});
-  if (r.status === 200) { $('#otpbox').style.display = 'block'; }
+  if (r.status === 200) { $('#otpbox').style.display = 'block'; if (AUTO) $('#otpauto').style.display = 'block'; }
   else { $('#err').innerText = 'خطا'; $('#cap').style.display = 'block'; $('#personUserPassword').value=''; }
 });
 $('#otpPassowrd').addEventListener('keydown', async e => {
@@ -47,26 +53,42 @@ $('#otpPassowrd').addEventListener('keydown', async e => {
 });
 </script></body></html>"""
 
+ERROR_PAGE = "<html><body><h1>خطای سامانه</h1></body></html>"
+
 
 class Site:
-    def __init__(self, good_pw="goodpw"):
+    def __init__(self, good_pw="goodpw", otp_auto_sent=False, error_page_first=False):
         self.good_pw = good_pw
         self.captcha_required = False
         self.resends = 0
         self.login_bodies = []
+        self.otp_auto_sent = otp_auto_sent
+        self.error_page_first = error_page_first
+        self.error_pages = 0
+        self.login_html = LOGIN.replace("__AUTO__", "true" if otp_auto_sent else "false")
 
     async def handle(self, route):
         req = route.request
         url = req.url
         if url.startswith("https://adliran.ir/"):
             return await route.fulfill(body=HOME, content_type="text/html; charset=utf-8")
+        if "eblagh1.adliran.ir/Login/ErrorPage" in url:
+            return await route.fulfill(body=ERROR_PAGE, content_type="text/html; charset=utf-8")
         if url.rstrip("/") in ("http://eblagh1.adliran.ir", "https://eblagh1.adliran.ir"):
-            # سایت واقعی 302 می‌دهد؛ در محیط تست، redirect شبکه از route عبور نمی‌کند، پس با JS هدایت می‌شود
+            if self.error_page_first:
+                # دستور کارفرما (آبان ۱۴۰۵): ورود بخش به صفحه‌ی خطا افتاد
+                # (سایت واقعی 302 می‌دهد؛ اینجا با JS هدایت می‌شود چون route+302
+                # رویداد باز شدن تب را گیر می‌اندازد)
+                self.error_page_first = False
+                self.error_pages += 1
+                return await route.fulfill(content_type="text/html", body=(
+                    "<script>location.replace('https://eblagh1.adliran.ir/Login/ErrorPage')</script>"))
+            # سایت واقعی 302 می‌دهد؛ در محیط تست با JS هدایت می‌شود
             return await route.fulfill(content_type="text/html", body=(
                 "<script>location.replace('https://iehraz.adliran.ir/Login/Authenticate"
                 "?ReturnUrl=http://eblagh1.adliran.ir/ENotice/Index')</script>"))
         if "iehraz.adliran.ir/Login/Authenticate" in url:
-            return await route.fulfill(body=LOGIN, content_type="text/html; charset=utf-8")
+            return await route.fulfill(body=self.login_html, content_type="text/html; charset=utf-8")
         if "GetCaptchaImage" in url:
             return await route.fulfill(body=PNG, content_type="image/png")
         if "CheckPersonLogin" in url:
@@ -171,56 +193,104 @@ async def test_full_login_with_wrong_password_captcha_and_wrong_otp():
         (T.ASK_PASSWORD, ("text", "badpw")),
         ("رمز شخصی شما اشتباه است", ("text", "goodpw")),
         ("کد امنیتی", ("text", "52877")),
-        # دستور کارفرما: با خودِ صفحه‌ی رمز موقت، پیامک فرستاده شده ← پرسش اول
-        # گزینه‌ی «ارسال رمز موقت» ندارد؛ فقط «وارد کنید» + توصیه‌ی ۳۰ دقیقه.
+        # پرسش اول رمز موقت: پیام «رمز موقت جدید ... ارسال شد» روی صفحه نیست ←
+        # دکمه‌ی «ارسال رمز موقت» هست (دستور کارفرما — ضبط steps 3)؛ اینجا اشتباه می‌شود.
         (T.ASK_OTP[:16], ("text", "111111")),
-        # رمز اشتباه ← دوباره پرسیده می‌شود (بدون ارسال مجدد خودکار)؛ حالا گزینه‌ی
-        # «ارسال رمز موقت» هست (۳ ساعت از آخرین ارسال گذشته) ← یک‌بار ارسال می‌شود.
+        # رمز اشتباه ← دوباره پرسیده می‌شود؛ هنوز پیامِ ارسالِ خودکار روی صفحه نیست ←
+        # دکمه‌ی ارسال هست ← یک‌بار ارسال می‌شود.
         ("رمز موقت واردشده صحیح نبود", ("choice", "resend")),
+        # ارسال دستی ← پیام «رمز موقت جدید ... ارسال شد» روی صفحه ظاهر شد ←
+        # پرسش بعدی بدون دکمه‌ی ارسال است.
         ("رمز موقت دوباره برای شما ارسال شد", ("text", "123456")),
     ]
-    bot, job, steps, ok = await _run(site, answers)
+    log = []
+    bot, job, steps, ok = await _run(site, answers, log=log)
     assert ok
     assert site.resends == 1                     # فقط ارسالِ دستی؛ ارسال مجدد خودکار حذف شد
     assert bot.photos == 1                       # فقط تصویر کپچا
     assert steps[:4] == ["L04", "L05", "L06", "L07"]
-    # پیام پرسش اول: «ارسال شد؛ وارد کنید» + توصیه‌ی ۳۰ دقیقه (دستور کارفرما)
+    # پیام پرسش اول: «ارسال شد؛ وارد کنید» + توصیه‌ی ۳۰ دقیقه
     otp_prompt = next(t for t in bot.texts if t and "رمز موقت برای شما پیامک شد" in t)
     assert "۳۰ دقیقه" in otp_prompt
+    # پرسش اول دکمه‌ی «ارسال رمز موقت» دارد (پیامِ خودکار نبود — دستور کارفرما)
+    first_opts = next(o for p, o in log if p == otp_prompt)
+    assert "resend" in first_opts
+    # پرسشِ بعد از ارسال دستی: پیام خودکار روی صفحه است ← بدون دکمه‌ی ارسال
+    after = next(o for p, o in log if "دوباره برای شما ارسال شد" in (p or ""))
+    assert "resend" not in after
     assert vault.get(job.owner, "nc") == "4420160616"  # تا پایان Job در RAM (برای ورود مجدد)
     vault.wipe(job.owner)
     assert vault.is_empty(job.owner)
     assert all("goodpw" not in (t or "") and "4420160616" not in (t or "") for t in bot.texts)
 
 
-async def test_otp_resend_option_absent_on_first_prompt_and_within_cooldown():
-    """قاعده‌ی کارفرما: پرسش اول رمز موقت دکمه‌ی ارسال ندارد (سامانه خودش پیامک کرده)؛
-    بعد از یک ارسال مجدد، تا ۳ ساعت گزینه‌ی جدید نمی‌آید."""
-    from legal_bot.services import sana_login as sl
+async def test_otp_resend_button_present_when_no_auto_sent_message():
+    """دستور کارفرما (ضبط steps 3): پیام «رمز موقت جدید ... ارسال شد» روی صفحه
+    نبود ← دکمه‌ی «ارسال رمز موقت» در هر پرسش رمز موقت حتماً هست."""
+    site = Site()                                 # بدون پیامِ ارسالِ خودکار
+    answers = [
+        (T.ASK_NATIONAL_CODE, ("text", "4420160616")),
+        (T.ASK_PASSWORD, ("text", "goodpw")),
+        (T.ASK_OTP[:16], ("text", "123456")),
+    ]
+    log = []
+    bot, job, steps, ok = await _run(site, answers, log=log)
+    assert ok
+    otp_prompts = [(p, o) for p, o in log if "رمز موقت" in (p or "") and "مقدار دریافتی" not in p]
+    assert otp_prompts
+    for _p, opts in otp_prompts:
+        assert "resend" in opts
 
-    sl._OTP_RESEND_RAM.clear()
+
+async def test_otp_resend_button_hidden_when_site_auto_sent_message():
+    """همان دستور، حالت دوم: پیام «رمز موقت جدید ... ارسال شد» روی صفحه هست ←
+    دکمه‌ی «ارسال رمز موقت» برای کاربر نمایش داده نمی‌شود."""
+    site = Site(otp_auto_sent=True)
+    answers = [
+        (T.ASK_NATIONAL_CODE, ("text", "4420160616")),
+        (T.ASK_PASSWORD, ("text", "goodpw")),
+        ("رمز موقت جدید", ("text", "123456")),
+    ]
+    log = []
+    bot, job, steps, ok = await _run(site, answers, log=log)
+    assert ok
+    assert site.resends == 0                      # هیچ ارسال دستی‌ای لازم نشد
+    otp_prompts = [(p, o) for p, o in log if "رمز موقت" in (p or "") and "مقدار دریافتی" not in p]
+    assert otp_prompts
+    for _p, opts in otp_prompts:
+        assert "resend" not in opts               # دکمه‌ی ارسال هرگز نمایش داده نشد
+    # پیام پرسش همان «رمز موقت جدید سامانه» است (نه پیام عمومی)
+    assert any("سامانه خودش" in (p or "") for p, _o in otp_prompts)
+
+
+async def test_error_page_on_entry_closes_tab_and_reenters():
+    """دستور کارفرما (آبان ۱۴۰۵): اگر ورود به بخش به Login/ErrorPage افتاد،
+    تب بسته می‌شود و دوباره از «گزینه‌ی قبلی» (کارت همان سامانه) وارد می‌شویم."""
+    site = Site(error_page_first=True)
+    answers = [
+        (T.ASK_NATIONAL_CODE, ("text", "4420160616")),
+        (T.ASK_PASSWORD, ("text", "goodpw")),
+        (T.ASK_OTP[:16], ("text", "123456")),
+    ]
+    bot, job, steps, ok = await _run(site, answers)
+    assert ok
+    assert site.error_pages == 1                  # فقط بار اول خطا داد؛ دفعه‌ی بعد درست شد
+    assert any("صفحه‌ی خطا" in (t or "") for t in bot.texts)   # پیام تلاش دوباره برای کاربر
+
+
+async def test_wrong_otp_limit_stops():
     site = Site()
     answers = [
         (T.ASK_NATIONAL_CODE, ("text", "4420160616")),
         (T.ASK_PASSWORD, ("text", "goodpw")),
-        (T.ASK_OTP[:16], ("text", "111111")),                       # اشتباه ۱ (بدون دکمه‌ی ارسال)
-        ("رمز موقت واردشده صحیح نبود", ("choice", "resend")),        # تنها ارسال مجدد مجاز
-        ("رمز موقت دوباره برای شما ارسال شد", ("text", "111111")),    # اشتباه ۲
-        ("رمز موقت واردشده صحیح نبود", ("text", "111111")),          # اشتباه ۳ ← توقف
+        (T.ASK_OTP[:16], ("text", "111111")),                       # اشتباه ۱
+        ("رمز موقت واردشده صحیح نبود", ("text", "111111")),        # اشتباه ۲
+        ("رمز موقت واردشده صحیح نبود", ("text", "111111")),        # اشتباه ۳ ← توقف
     ]
-    log = []
     with pytest.raises(FlowError) as ei:
-        await _run(site, answers, log=log)
+        await _run(site, answers)
     assert ei.value.category == "OTP_RESEND_LIMIT"
-    assert site.resends == 1                       # ارسال دوم (خودکار یا دستی) انجام نشد
-    otp_prompts = [(p, o) for p, o in log if "رمز موقت" in (p or "") and "مقدار دریافتی" not in p]
-    # پرسش اول: بدون دکمه‌ی «ارسال رمز موقت» (دستور کارفرما)
-    first = next(o for p, o in otp_prompts if "پیامک شد؛" in p)
-    assert "resend" not in first
-    # فقط یک‌بار — بعد از اولین اشتباه — دکمه‌ی ارسال می‌آید؛ پس از آن تا ۳ ساعت نه
-    with_resend = [p for p, o in otp_prompts if "resend" in o]
-    assert len(with_resend) == 1 and "صحیح نبود" in with_resend[0]
-    sl._OTP_RESEND_RAM.clear()
+    assert site.resends == 0                       # هیچ ارسال دستی‌ای انجام نشد
 
 
 async def test_wrong_password_limit_stops():

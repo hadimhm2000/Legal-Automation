@@ -10,6 +10,9 @@
   ← پاسخ CheckPersonLogin (200 موفق / 409 نادرست) ← رمز موقت ← پاسخ CheckPersonOtpLogin
   اگر بعد از ورود صفحه‌ی «خطای امنیتی / اعتبار شما منقضی شده است» آمد: دکمه‌ی
   «ورود به صفحه اصلی عدل ایران» ← صبر تا adliran.ir ← تکرار مراحل.
+  اگر تبِ تازه به صفحه‌ی خطای سامانه (Login/ErrorPage) افتاد (دستور کارفرما —
+  آبان ۱۴۰۵): تب بسته می‌شود و دوباره از «گزینه‌ی قبلی» (کارت همان سامانه در
+  صفحه‌ی اصلی) وارد بخش می‌شویم؛ این کار تا MAX_PORTAL_ENTRY_ATTEMPTS بار.
 
 کدملی و رمز شخصی (و آخرین رمز موقت) فقط در vault همین Job و فقط تا پایان همین Job در RAM
 می‌مانند تا اگر سامانه وسط کار دوباره ورود خواست، از کاربر دوباره پرسیده نشود؛ در پایان Job
@@ -60,30 +63,15 @@ def _validate_otp(v):
     return (v, None) if 4 <= len(v) <= 10 else (None, "رمز موقت باید فقط عدد (معمولاً ۶ رقم) باشد.")
 
 
-# ── قاعده‌ی کارفرما (آبان ۱۴۰۵): یک‌بار «ارسال رمز موقت» ← تا ۳ ساعت ارسال جدید ممنوع ──
-# زمان آخرین ارسالِ رمز موقت هر کاربر؛ در دیتابیس (settings) می‌ماند و اگر در دسترس
-# نبود (مثل تست‌ها) فقط در RAM همین پروسه.
+# ── قاعده‌ی کارفرما (آبان ۱۴۰۵ — ضبط steps 3): پیام «رمز موقت جدید برای شماره
+# همراه شما ارسال شد...» روی صفحه‌ی ورود یعنی خود سامانه رمز تازه فرستاده ←
+# دکمه‌ی «ارسال رمز موقت» به کاربر نمایش داده نمی‌شود؛ پیام نبود ← دکمه حتماً هست.
+# زمان آخرین ارسالِ دستیِ رمز موقت هر کاربر فقط برای ثبت/گزارش در settings می‌ماند.
 _OTP_RESEND_RAM: dict[int, float] = {}
 
 
-async def otp_resend_allowed(ctx, user_id: int) -> bool:
-    """آیا ۳ ساعت از آخرین ارسالِ رمز موقت این کاربر گذشته است؟"""
-    last = 0.0
-    db = getattr(ctx, "db", None)
-    if db is not None:
-        try:
-            v = await db.get_setting(f"otp_resend:{user_id}")
-            if v:
-                last = float(v)
-        except Exception:
-            last = _OTP_RESEND_RAM.get(user_id, 0.0)
-    else:
-        last = _OTP_RESEND_RAM.get(user_id, 0.0)
-    return (time.time() - last) >= config.OTP_RESEND_COOLDOWN_SEC
-
-
 async def otp_mark_resend(ctx, user_id: int):
-    """ثبت زمان ارسال رمز موقت ← تا ۳ ساعت گزینه‌ی ارسال جدید غیرفعال می‌ماند."""
+    """ثبت زمان ارسال دستی رمز موقت (برای گزارش مدیر)."""
     now = time.time()
     _OTP_RESEND_RAM[user_id] = now
     db = getattr(ctx, "db", None)
@@ -105,7 +93,9 @@ async def collect_credentials(job, ctx):
 
 
 class _Restart(Exception):
-    pass
+    def __init__(self, reason: str = "expired"):
+        super().__init__(reason)
+        self.reason = reason
 
 
 class SanaLogin:
@@ -122,13 +112,29 @@ class SanaLogin:
             try:
                 await self.login(page)
                 return page
-            except _Restart:
-                await self.ctx.job.say("🔁 سامانه اعتبار ورود را منقضی اعلام کرد؛ از صفحه‌ی اصلی دوباره وارد می‌شوم…")
+            except _Restart as r:
+                if r.reason != "errorpage":
+                    await self.ctx.job.say("🔁 سامانه اعتبار ورود را منقضی اعلام کرد؛ از صفحه‌ی اصلی دوباره وارد می‌شوم…")
                 continue
         raise FlowError("SESSION_INVALID", "expired-credential page repeated", T.SITE_DOWN)
 
     def is_target(self, page: Page) -> bool:
         return bool(self.cfg["host"].search(page.url or "")) and "iehraz" not in (page.url or "")
+
+    @staticmethod
+    def on_error_page(page) -> bool:
+        """صفحه‌ی خطای سامانه (Login/ErrorPage — دستور کارفرما، آبان ۱۴۰۵)."""
+        return S.ERROR_PAGE_URL_PART.lower() in (page.url or "").lower()
+
+    async def recover_error_page(self, page) -> Page:
+        """دستور کارفرما: اگر ورود به بخشی به صفحه‌ی Login/ErrorPage افتاد،
+        تب بسته می‌شود و دوباره از «گزینه‌ی قبلی» (کارت همان سامانه در صفحه‌ی
+        اصلی adliran.ir) وارد بخش می‌شویم."""
+        await self.job.say(T.ERROR_PAGE_RETRY)
+        if page is not self.br.page:
+            with contextlib.suppress(Exception):
+                await page.close()
+        return await self.run()
 
     async def enter_portal(self) -> Page:
         await self.ctx.step("L04")
@@ -157,16 +163,21 @@ class SanaLogin:
                 with contextlib.suppress(Exception):
                     await new.wait_for_load_state("domcontentloaded", timeout=30_000)
                 await wait_ready(new, timeout_ms=30_000, settle=False)  # لود کامل تب تازه
+                # نکته: errorpage قبل از بقیه بررسی می‌شود چون آدرسِ صفحه‌ی خطا روی
+                # میزبانِ خودِ سامانه است و در غیر این صورت حالت «in» اشتباهی می‌شود.
                 state = await wait_first({
+                    "errorpage": lambda: asyncio.sleep(0, self.on_error_page(new)),
                     "login": lambda: visible(new.locator(S.NATIONAL_CODE)),
                     "in": lambda: asyncio.sleep(0, self.is_target(new) and "iehraz" not in new.url),
                     "expired": lambda: self._expired(new),
                 }, timeout_ms=30_000)
-                if state == "login":
+                if state in ("login", "in"):
+                    # login: فرم ورود آماده است / in: هنوز نشست قبلی (همین Job) معتبر است
                     return new
-                if state == "in":
-                    # هنوز نشست قبلی (همین Job) معتبر است
-                    return new
+                if state == "errorpage":
+                    # دستور کارفرما (آبان ۱۴۰۵): تبِ خطا بسته و دوباره از گزینه‌ی
+                    # قبلی (کارت همان سامانه) وارد بخش می‌شویم.
+                    await self.job.say(T.ERROR_PAGE_RETRY)
                 last_err = f"entry state={state} url-host={_host(new.url)}"
             except Exception as e:
                 last_err = f"{type(e).__name__}"
@@ -288,24 +299,25 @@ class SanaLogin:
         if state != "otp":
             raise FlowError("LOGIN_UI_CHANGED", "otp field not shown", T.SITE_DOWN)
 
-        # L07 رمز موقت (دستور کارفرما — آبان ۱۴۰۵):
-        # سامانه با نمایش صفحه‌ی رمز موقت، خودش پیامک را فرستاده (متن سبز/نارنجی سایت)
-        # ← گزینه‌ی «ارسال رمز موقت» فعال نیست و فقط گفته می‌شود «رمز موقت ارسال شد؛
-        # وارد کنید» + «اگر نرسید ۳۰ دقیقه دیگر دوباره اقدام کنید».
-        # فقط بعد از اشتباه بودن رمز — و اگر ۳ ساعت از آخرین ارسال گذشته باشد —
-        # گزینه‌ی ارسال یک‌بار نمایش داده می‌شود؛ پس از آن تا ۳ ساعت قفل است.
+        # L07 رمز موقت (دستور کارفرما — آبان ۱۴۰۵، ضبط steps 3):
+        # اگر خودِ سامانه پیام «رمز موقت جدید برای شماره همراه شما ارسال شد...»
+        # را نشان داده باشد، یعنی رمز تازه پیامک شده ← دکمه‌ی «ارسال رمز موقت»
+        # به کاربر نمایش داده نمی‌شود؛ اگر این پیام نیامده، دکمه حتماً هست.
         await self.ctx.step("L07")
         wrong = 0
         prompt = T.ASK_OTP_RELOGIN if relogin else T.ASK_OTP
+        if await self._otp_auto_sent(page):
+            # خود سامانه پیام «رمز موقت جدید ... ارسال شد» را نشان داده (steps 3)
+            prompt = T.ASK_OTP_AUTO
         while True:
             if vault.get(job.owner, "otp") is None:
-                extra = None
-                if wrong and await otp_resend_allowed(self.ctx, job.user_id):
-                    extra = [("resend", T.SEND_OTP_BTN)]
+                # دکمه‌ی «ارسال رمز موقت» فقط وقتی هست که پیامِ ارسالِ خودکار روی
+                # صفحه نباشد (دستور کارفرما — ضبط steps 3).
+                extra = None if await self._otp_auto_sent(page) else [("resend", T.SEND_OTP_BTN)]
                 res = await job.ask_secret("otp", prompt, _validate_otp, lambda v: "•" * len(v),
                                            extra_options=extra)
                 if res == ("choice", "resend"):
-                    await otp_mark_resend(self.ctx, job.user_id)   # تا ۳ ساعت دیگر قفل
+                    await otp_mark_resend(self.ctx, job.user_id)
                     await self._resend(page)
                     prompt = T.OTP_SENT
                     continue
@@ -326,9 +338,18 @@ class SanaLogin:
     async def _after_login(self, page):
         await self.ctx.step("L08")
         state = await wait_first({
+            "errorpage": lambda: asyncio.sleep(0, self.on_error_page(page)),
             "in": lambda: asyncio.sleep(0, self.is_target(page)),
             "expired": lambda: self._expired(page),
         }, timeout_ms=45_000)
+        if state == "errorpage":
+            # صفحه‌ی خطا بعد از ورود (دستور کارفرما): تب بسته و دوباره از گزینه‌ی
+            # قبلی وارد می‌شویم؛ پیام مربوط همین‌جا ارسال شده و run() دوباره می‌رود.
+            await self.job.say(T.ERROR_PAGE_RETRY)
+            if page is not self.br.page:
+                with contextlib.suppress(Exception):
+                    await page.close()
+            raise _Restart("errorpage")
         if state == "expired":
             await self._recover_expired(page)
         if state != "in":
@@ -346,6 +367,19 @@ class SanaLogin:
             if not await visible(page.get_by_text(text_re(*S.OTP_RESEND))):
                 raise FlowError("LOGIN_UI_CHANGED", "resend otp link missing", T.SITE_DOWN)
 
+    async def _otp_auto_sent(self, page) -> bool:
+        """پیام خودِ سامانه روی صفحه‌ی ورود: «رمز موقت جدید برای شماره همراه شما
+        ارسال شد. پس از دریافت، د...» (ضبط steps 3 — دستور کارفرما).
+
+        این پیام که هست، خود سامانه رمز تازه فرستاده ← دکمه‌ی «ارسال رمز موقت»
+        نمایش داده نمی‌شود؛ نبودش ← دکمه حتماً نمایش داده می‌شود."""
+        try:
+            txt = await asyncio.wait_for(page_text(page), 4)
+        except Exception:
+            return False
+        txt = normalize_fa(txt)
+        return all(w in txt for w in S.OTP_AUTO_SENT_WORDS)
+
     async def _solve_captcha(self, page):
         """تصویر کپچا (فقط خودِ تصویر، نه صفحه) برای کاربر فرستاده می‌شود تا خودش حل کند."""
         img = page.locator(S.CAPTCHA_IMAGE).first
@@ -359,7 +393,11 @@ class SanaLogin:
 
     # ── وسط کار: اگر سامانه دوباره به صفحه‌ی ورود برد ─────────────────
     async def ensure(self, page: Page) -> Page:
-        """اگر صفحه به ورود/خطای امنیتی رفته، دوباره وارد می‌شود و صفحه‌ی معتبر را برمی‌گرداند."""
+        """اگر صفحه به ورود/خطای امنیتی/صفحه‌ی خطا رفته، دوباره وارد می‌شود و صفحه‌ی
+        معتبر را برمی‌گرداند."""
+        if self.on_error_page(page):
+            # Login/ErrorPage (دستور کارفرما): تب بسته و ورود دوباره از گزینه‌ی قبلی
+            return await self.recover_error_page(page)
         if await self._expired(page):
             with contextlib.suppress(_Restart):
                 await self._recover_expired(page)

@@ -1,23 +1,29 @@
 """ثبت نوبت قضائی (adliran.ir/Turn) — ملاقات با دادورز اجرای احکام.
 
-روند (مطابق فایل ضبط کارفرما):
-  «اخذ نوبت بر اساس شماره پرونده» ← «فهرست پرونده های من» ← جستجوی شماره پرونده/بایگانی
-  ← فقط شعبه‌هایی که «اجرای احکام / اجرا احکام» دارند (یکی ← تأیید کاربر؛ چندتا ← انتخاب کاربر)
-  ← «بررسی اطلاعات پرونده فوق» ← «انتخاب سمت جهت ملاقات» = همیشه «دادورز»
-  ← فهرست دوم (زیر دادورز) برای کاربر ← «مرحله ی بعدی» ← «فهرست علت ها» ← روز و ساعت
-  ← «ثبت و دریافت نوبت» ← «بلی» (اگر نوبت پر بود «بستن» و ساعت/روز بعدی) ← «چاپ».
+روند (مطابق ضبط‌های واقعی کارفرما — steps / steps 2 / steps 3، آبان ۱۴۰۵):
+  «اخذ نوبت بر اساس شماره پرونده» ← «فهرست پرونده های من» ← جستجو با شماره پرونده
+  (#txtCaseNoSearch) یا شماره بایگانی (#txtArchiveNoSearch) ← «بازیابی پرونده»
+  (استعلام) ← نتیجه برای تأیید کاربر فرستاده می‌شود ← ردیف ← «بررسی اطلاعات
+  پرونده فوق» (#btnCheckUnitTurn) ← اگر خودِ سامانه سمت/دادورز را پر کرده بود
+  مستقیم «مرحله ی بعدی»؛ وگرنه مثل قبل از کاربر پرسیده می‌شود ← «فهرست علت ها» ←
+  همیشه ردیف ۱۵ «درخواست جلب متهم» (فهرست برای کاربر ارسال نمی‌شود — دستور
+  کارفرما) ← «متوجه شدم» ← روز و ساعت ← «ثبت و دریافت نوبت» ← «بلی» ← «چاپ».
+
+ثبت چند نوبت (دستور کارفرما): بعد از هر نوبت، «صفحه اصلی» (#btnHome) و همان
+روند از ابتدا برای شماره‌ی بعدی — عین ضبط steps.
 
 قواعد روز و ساعت (دستور کارفرما — آبان ۱۴۰۵):
-  • متن کامل هر گزینه‌ی منو (شعبه/دادورز/علت) برای کاربر نمایش داده می‌شود؛ دکمه‌ها شماره‌دارند.
   • روزِ جاری انتخاب نمی‌شود؛ همیشه از «فردا» شروع می‌شود.
   • پنجشنبه، جمعه و تعطیلات رسمی هرگز انتخاب نمی‌شوند؛ خطای «پنجشنبه ها / تعطیل» ← روز بعد.
-  • نوبت‌های «btn-time disable» (State==2، تکمیل ظرفیت) قابل انتخاب نیستند؛ فقط ساعت‌های
-    آزاد (State!=2) انتخاب می‌شوند.
-  • اگر همه‌ی ساعت‌های یک روز تکمیل ظرفیت بود ← روز بعد و ادامه‌ی همین روند تا رزرو نوبت.
-  • خطای «نمی توان علت مراجعه را ... انتخاب نمود» ← «مرحله ی قبلی» ← «فهرست علت ها» ←
-    ردیف ۱۵ «درخواست جلب متهم» ← ادامه‌ی روند تا اخذ نوبت.
+  • دونه‌دونه روزها چک می‌شوند تا نوبت خالی پیدا شود (عین ضبط steps 2).
+  • نوبت‌های «btn-time disable» (State==2، تکمیل ظرفیت) قابل انتخاب نیستند.
+  • خطای «در تنظیمات نوبت دهی ... نمی توان علت مراجعه را ... انتخاب نمود» ←
+    «مرحله ی قبلی» ← «فهرست علت ها» ← «ارائه دلائل»؛ باز هم نشد ← «پیگیری پرونده».
+  • خطای «طبق تنظیمات انجام شده توسط شعبه، اخذ نوبت برای روزهای X لغایت Y فعال
+    است.» ← روزهای قبل از X رد می‌شوند؛ روزِ بعد از Y (بازه‌ی تمام‌شده) ← «نوبت
+    کامل پر است؛ ۲۴ ساعت دیگر ساعت ۸ صبح اقدام کنید» (دستور کارفرما).
   • sweet-alert «هیچ سمتی ... تعریف نشده است»: در مرحله‌ی شماره پرونده/تعیین دادورز ←
-    «امکان نوبت گرفتن نمی باشد»؛ حین ثبت نوبت ← «ظرفیت پر است؛ ۲۴ ساعت دیگر اقدام کنید».
+    «امکان نوبت گرفتن نمی باشد»؛ حین ثبت نوبت ← «ظرفیت پر است؛ ۲۴ ساعت دیگر».
 """
 from __future__ import annotations
 
@@ -31,17 +37,18 @@ from playwright.async_api import Page
 
 from .. import config
 from .. import texts as T
-from ..utils import (fa_date, jalali_of, normalize_fa, parse_jalali_header, to_fa_digits,
+from ..utils import (fa_date, jalali_of, normalize_fa, parse_jalali, parse_jalali_header, to_fa_digits,
                      turn_candidate_days, weekday_fa)
 from . import selectors as S
 from .browser import click_text, human_pause, page_text, pdf_of, text_re, visible, wait_first
-from .session import FlowError
+from .session import FlowError, JobCancelled, UserTimeout
 
 log = logging.getLogger(__name__)
 
-# ردیف‌های «فهرست پرونده های من» که شماره را دارند + دکمه‌ی انتخاب‌شان
+# ردیف‌های «فهرست پرونده های من» که شماره را دارند + دکمه‌ی انتخاب‌شان.
+# شماره می‌تواند چند صورت داشته باشد (مثل 0501667 و 501667 — صفرِ ابتدایی).
 ROWS_JS = r"""
-(num) => {
+(nums) => {
   const vis = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
   const norm = s => (s || '').replace(/[۰-۹]/g, d => d.charCodeAt(0) - 0x06F0)
                               .replace(/[٠-٩]/g, d => d.charCodeAt(0) - 0x0660);
@@ -49,7 +56,7 @@ ROWS_JS = r"""
   const out = [];
   rows.forEach((r, i) => {
     const t = norm(r.innerText || '').replace(/\s+/g, ' ');
-    if (!num || !t.includes(num)) return;
+    if (!nums || !nums.some(n => n && t.includes(n))) return;
     if (r.querySelector('tr')) return;           // فقط درونی‌ترین ردیف
     const b = r.querySelector('button, a, input[type=radio], input[type=checkbox]');
     if (!b) return;
@@ -65,6 +72,8 @@ ROWS_JS = r"""
 MENU_JS = r"""
 () => {
   const vis = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  // برچسب‌های کهنه‌ی منوی قبلی پاک می‌شوند تا کلیک روی عنصر پنهان نرود
+  document.querySelectorAll('[data-mi]').forEach(el => el.removeAttribute('data-mi'));
   const menus = Array.from(document.querySelectorAll(
       '.dropdown-menu, [role=listbox], .multiselect-container, .modal.show, .modal.in'))
       .filter(vis);
@@ -143,6 +152,23 @@ TIMES_JS = r"""
 }
 """
 
+# پنهان‌کردن پیام کهنه‌ی سامانه (مثل <p style="display:block;"> خطای علت مراجعه یا
+# بازه‌ی فعال نوبت‌دهی) تا در بررسی‌های بعدی همان پیام دوباره خوانده نشود.
+# فقط عنصرهای برگِ قابل‌مشاهده‌ای که «همه‌ی» واژه‌های خواسته‌شده را دارند.
+HIDE_MSG_JS = r"""
+(words) => {
+  const vis = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  let n = 0;
+  document.querySelectorAll('p, div, span, label, h2, h3').forEach(el => {
+    if (!vis(el) || el.children.length) return;
+    const t = (el.innerText || '').replace(/\s+/g, ' ').trim();
+    if (!t || t.length > 400) return;
+    if (words.every(w => t.indexOf(w) !== -1)) { el.style.display = 'none'; n++; }
+  });
+  return n;
+}
+"""
+
 
 def is_execution_branch(text: str) -> bool:
     t = normalize_fa(text)
@@ -155,10 +181,25 @@ def branch_of(text: str) -> str:
     return (m.group(1) if m else t[:120]).strip()
 
 
+def _is_range_error(txt: str) -> bool:
+    """«طبق تنظیمات انجام شده توسط شعبه، اخذ نوبت برای روزهای ... فعال است.»"""
+    t = normalize_fa(txt or "")
+    return all(w in t for w in S.RANGE_ERROR_WORDS)
+
+
 class Turn:
     def __init__(self, ctx, br, login, page: Page):
         self.ctx, self.br, self.login, self.page = ctx, br, login, page
         self.job = ctx.job
+        # وضعیت هر پرونده (در select_case برای هر نوبتِ تازه از نو مقدار می‌گیرد):
+        self._reset_case_state()
+
+    def _reset_case_state(self):
+        """هر پرونده/بایگانی از نو شروع می‌شود (ثبت چند نوبت — ضبط steps)."""
+        # علت‌های جایگزینِ خطای علت مراجعه: «ارائه دلائل» سپس «پیگیری پرونده»
+        self._reason_fallbacks: list[str] = list(S.TURN_REASON_FALLBACKS)
+        self._active_range: tuple[dt.date | None, dt.date | None] = (None, None)
+        self._last_create_error = ""                # متن هشدارِ آخرین ثبتِ ناموفق
 
     # ── پیام‌های سامانه (sweet-alert / alert-danger / h2) ──────────────
     async def _alert_text(self) -> str:
@@ -179,6 +220,11 @@ class Turn:
     async def _close_alert(self):
         """بستن پیام سامانه (دکمه‌ی «بستن» sweet-alert) تا مسیر ادامه پیدا کند."""
         await click_text(self.page, *S.TURN_CLOSE, timeout=3_000)
+
+    async def _hide_message(self, words):
+        """پنهان‌کردن پیام کهنه (خطای علت مراجعه/بازه‌ی فعال) روی خود صفحه."""
+        with contextlib.suppress(Exception):
+            await self.page.evaluate(HIDE_MSG_JS, list(words))
 
     async def _role_error(self) -> str:
         """sweet-alert «هیچ سمتی ... تعریف نشده است» (HTML ارسالی کارفرما)."""
@@ -217,13 +263,64 @@ class Turn:
             return txt
         return ""
 
+    async def _range_error(self) -> str:
+        """خطای بازه‌ی فعال نوبت‌دهی شعبه (ضبط steps 2 — دستور کارفرما):
+
+        «طبق تنظیمات انجام شده توسط شعبه، اخذ نوبت برای روزهای 1405/08/26 لغایت
+        1405/09/05 فعال است.» — در هشدارِ آخرین ثبتِ ناموفق، sweet-alertِ باز یا
+        متن صفحه (<p style="display:block;">) ظاهر می‌شود."""
+        for txt in (self._last_create_error, await self._alert_text()):
+            if _is_range_error(txt):
+                self._last_create_error = ""
+                return txt
+        txt = await page_text(self.page)
+        if _is_range_error(txt):
+            for line in txt.splitlines():
+                if _is_range_error(line):
+                    return line.strip()[:300]
+        return ""
+
+    @staticmethod
+    def _parse_active_range(txt: str) -> tuple[dt.date | None, dt.date | None]:
+        """«روزهای 1405/08/26 لغایت 1405/09/05» ← (شروعِ بازه، پایانِ بازه)."""
+        t = normalize_fa(txt or "")
+        m = re.search(r"(\d{4}/\d{1,2}/\d{1,2})\s*لغایت\s*(\d{4}/\d{1,2}/\d{1,2})", t)
+        if not m:
+            return None, None
+        return parse_jalali(m.group(1)), parse_jalali(m.group(2))
+
+    async def _handle_range_error(self, txt: str, target: dt.date) -> bool:
+        """رسیدگی به خطای بازه‌ی فعال (دستور کارفرما — ضبط steps 2).
+
+        روزِ قبل از شروعِ بازه → True (این روز رد شود؛ پیاده‌رویِ دونه‌دونه از
+        روزِ شروعِ بازه ادامه می‌یابد)؛ روزِ داخل/بعد از پایانِ بازه ← کلِ بازه‌ی
+        فعال امتحان/پر شده ← پرش TURN_CAPACITY_FULL: «کامل پر است؛ ۲۴ ساعت دیگر
+        ساعت ۸ صبح اقدام کنید»."""
+        await self._close_alert()
+        start, end = self._parse_active_range(txt)
+        self._active_range = (start, end)
+        await self._hide_message(S.RANGE_ERROR_WORDS)   # پیام کهنه دوباره خوانده نشود
+        if start and target < start:
+            log.info("turn: day %s before active range %s..%s", target, start, end)
+            return True
+        raise FlowError("TURN_CAPACITY_FULL", f"active range full: {txt[:150]}", T.TURN_FULL_RANGE)
+
     # ── منوها ──
     async def _menu(self) -> list[dict]:
         await self.page.wait_for_timeout(900)
         return await self.page.evaluate(MENU_JS)
 
     async def _click_menu(self, idx):
-        await self.page.locator(f'[data-mi="{idx}"]').first.click()
+        loc = self.page.locator(f'[data-mi="{idx}"]')
+        # فقط عنصرِ قابل‌مشاهده کلیک می‌شود (برچسبِ کهسته‌ی منوی بسته‌شده ممکن است مانده باشد)
+        with contextlib.suppress(Exception):
+            for i in range(await loc.count()):
+                el = loc.nth(i)
+                if await el.is_visible():
+                    await el.click()
+                    await human_pause(self.page, 1200)
+                    return
+        await loc.first.click()
         await human_pause(self.page, 1200)
 
     async def _choose(self, items: list[dict], prompt: str, confirm_single: str) -> dict:
@@ -243,6 +340,13 @@ class Turn:
 
     # ── مراحل ──
     async def select_case(self, number: str, by: str):
+        """جستجوی پرونده در «فهرست پرونده های من» (ضبط steps — دستور کارفرما):
+
+        شماره بایگانی/پرونده در فیلد مربوطه پر می‌شود ← «بازیابی پرونده»
+        (استعلام) ← نتیجه برای تأیید کاربر فرستاده می‌شود ← ردیف ← دکمه‌ی انتخاب
+        ← «بررسی اطلاعات پرونده فوق».
+        """
+        self._reset_case_state()
         await human_pause(self.page, 2000)
         if not await click_text(self.page, *S.TURN_BY_CASE, timeout=15_000):
             raise FlowError("PARSE_CHANGED", "turn: 'by case number' card not found")
@@ -251,23 +355,45 @@ class Turn:
         if await visible(self.page.locator(S.TURN_MY_CASES), timeout=8000):
             await self.page.locator(S.TURN_MY_CASES).first.click()
             await human_pause(self.page, 1500)
-            box = self.page.locator(S.TURN_MY_CASES_SEARCH).first
-            if by == "case" and await visible(box, timeout=5000):
+            # جستجو با شماره پرونده (#txtCaseNoSearch) یا شماره بایگانی شعبه
+            # (#txtArchiveNoSearch) — هر دو صورتِ شماره (با/بدون صفرِ ابتدایی) می‌گردد.
+            field = S.TURN_MY_CASES_SEARCH if by == "case" else S.TURN_ARCHIVE_SEARCH
+            box = self.page.locator(field).first
+            if await visible(box, timeout=5000):
                 await box.fill(number)
-            await click_text(self.page, *S.TURN_MY_CASES_GO, timeout=6000)
+            if not await click_text(self.page, *S.TURN_MY_CASES_GO, timeout=6000):
+                raise FlowError("PARSE_CHANGED", "turn: retrieve-cases button not found")
             await human_pause(self.page, 3000)
-            rows = await self.page.evaluate(ROWS_JS, number)
+            nums = {number, (number or "").lstrip("0")} - {""}
+            rows = await self.page.evaluate(ROWS_JS, sorted(nums))
+            if not rows:
+                # شاید sweet-alertِ «یافت نشد» باز باشد؛ بسته می‌شود تا پیام خطا بیاید
+                await self._close_alert()
         if rows:
-            ex = [r for r in rows if is_execution_branch(r["text"])]
-            if not ex:
-                raise FlowError("NO_EXECUTION_BRANCH", "no execution branch",
-                                "⚠️ برای این پرونده شعبه‌ی «اجرای احکام» پیدا نشد؛ نوبت دادورز فقط برای پرونده‌های "
-                                "اجرای احکام ثبت می‌شود. مبلغ پرداختی توسط مدیر بررسی و پیگیری می‌شود.")
-            items = [{"idx": r["idx"], "text": branch_of(r["text"])} for r in ex]
-            chosen = await self._choose(items, "شعبه‌ی اجرای احکام مورد نظر را انتخاب کنید:",
-                                        "شعبه‌ی استخراج‌شده:\n{}\nتأیید می‌کنید؟")
+            if by == "case":
+                ex = [r for r in rows if is_execution_branch(r["text"])]
+                if not ex:
+                    raise FlowError("NO_EXECUTION_BRANCH", "no execution branch",
+                                    "⚠️ برای این پرونده شعبه‌ی «اجرای احکام» پیدا نشد؛ نوبت دادورز فقط برای پرونده‌های "
+                                    "اجرای احکام ثبت می‌شود. مبلغ پرداختی توسط مدیر بررسی و پیگیری می‌شود.")
+                items = [{"idx": r["idx"], "text": branch_of(r["text"])} for r in ex]
+                chosen = await self._choose(items, "شعبه‌ی اجرای احکام مورد نظر را انتخاب کنید:",
+                                            "شعبه‌ی استخراج‌شده:\n{}\nتأیید می‌کنید؟")
+            else:
+                # شماره بایگانی: نتیجه‌ی استعلام برای تأیید کاربر فرستاده می‌شود
+                # (دستور کارفرما — «بعد برای کاربر میفرستی که تایید کند»)
+                ex = [r for r in rows if is_execution_branch(r["text"])] or rows
+                items = [{"idx": r["idx"], "text": r["text"]} for r in ex]
+                chosen = await self._choose(items, "پرونده‌ی پیدا شده برای این شماره بایگانی:",
+                                            "پرونده:\n{}\nتأیید می‌کنید؟")
             await self.page.locator(f'[data-tr="{chosen["idx"]}"]').first.click()
-            await human_pause(self.page, 1500)
+            await human_pause(self.page, 1200)
+            # دکمه‌ی «انتخاب» همان ردیف (ضبط steps: td:nth-of-type(2) > button)
+            with contextlib.suppress(Exception):
+                row_btn = self.page.locator(f'[data-tr="{chosen["idx"]}"] button').first
+                if await visible(row_btn, timeout=2500):
+                    await row_btn.click()
+                    await human_pause(self.page, 1200)
         elif by == "case" and await visible(self.page.locator(S.TURN_CASE_INPUT)):
             el = self.page.locator(S.TURN_CASE_INPUT).first
             await el.click()
@@ -281,7 +407,41 @@ class Turn:
         await human_pause(self.page, 3000)   # فرصت بررسی پرونده توسط سامانه
         await self._role_or_raise()          # «هیچ سمتی» در بخش شماره پرونده (دستور کارفرما)
 
+    async def _placeholder_visible(self, words) -> bool:
+        """آیا placeholder منوی سمت/دادورز (مثل «انتخاب سمت جهت ملاقات») هنوز دیده می‌شود؟"""
+        try:
+            loc = self.page.get_by_text(text_re(*words))
+            for i in range(await loc.count()):
+                if await loc.nth(i).is_visible():
+                    return True
+        except Exception:
+            pass
+        return False
+
+    async def _daadvarz_prefilled(self) -> bool:
+        """آیا بعد از «بررسی اطلاعات پرونده فوق» سامانه خودش سمت/دادورز را پر کرده؟
+
+        (دستور کارفرما — ضبط steps): اگر placeholderهای «انتخاب سمت جهت ملاقات» /
+        «هیچ موردی انتخاب نشده» روی صفحه نباشند و «مرحله ی بعدی» آماده باشد،
+        یعنی سامانه قسمت‌های دادورز را خودش تکمیل کرده ← مستقیم مرحله‌ی بعد."""
+        for _ in range(10):                      # تا ~۸ ثانیه برای رندر مرحله‌ی بعد
+            if await self._placeholder_visible(S.TURN_ROLE_PLACEHOLDER):
+                return False
+            if await self._placeholder_visible(S.TURN_PERSON_PLACEHOLDER):
+                return False
+            if await visible(self.page.locator(S.TURN_NEXT), timeout=600):
+                return True
+            await asyncio.sleep(0.8)
+        return False
+
     async def select_daadvarz(self):
+        # سامانه خودش سمت/دادورز را پر کرده ← فقط «مرحله ی بعدی» (دستور کارفرما)
+        if await self._daadvarz_prefilled():
+            await self.job.say(T.TURN_DAAVARZ_PREFILLED)
+            await self.page.locator(S.TURN_NEXT).first.click()
+            await human_pause(self.page, 2500)
+            await self._role_or_raise()          # «هیچ سمتی» در بخش تعیین دادورز
+            return
         if not await click_text(self.page, *S.TURN_ROLE_PLACEHOLDER, timeout=15_000):
             await self._role_or_raise()      # شاید sweet-alert «هیچ سمتی» آمده باشد
             txt = await page_text(self.page)
@@ -303,23 +463,36 @@ class Turn:
         await self.page.locator(S.TURN_NEXT).first.click()
         await human_pause(self.page, 2500)
         await self._role_or_raise()          # «هیچ سمتی» در بخش تعیین دادورز (دستور کارفرما)
-        await self._fix_reason_error_if_any()
 
     async def select_reason(self):
+        """علت مراجعه (دستور کارفرما — آبان ۱۴۰۵): همیشه ردیف ۱۵ فهرست علت‌ها
+        («درخواست جلب متهم») انتخاب می‌شود؛ فهرست علت‌ها برای کاربر ارسال نمی‌شود."""
         if not await visible(self.page.locator(S.TURN_REASON_BTN), timeout=8000):
             return
         await self.page.locator(S.TURN_REASON_BTN).first.click()
-        reasons = await self._menu()
-        if reasons:
-            chosen = await self._choose(reasons, "علت مراجعه را انتخاب کنید:", "علت مراجعه:\n{}\nتأیید می‌کنید؟")
-            await self._click_menu(chosen["idx"])
-        await click_text(self.page, *S.TURN_UNDERSTOOD, timeout=5000)
         await human_pause(self.page, 1500)
+        if not await self._click_reason_15():
+            raise FlowError("PARSE_CHANGED", "reason row 15 (درخواست جلب متهم) not found")
+        await self._after_reason_pick()
 
-    # ── خطای علت مراجعه (دستور کارفرما) ────────────────────────────────
-    async def _click_reason_15(self) -> bool:
-        """انتخاب ردیف «درخواست جلب متهم» (ردیف ۱۵ فهرست علت ها)."""
-        pat = text_re(*S.TURN_REASON_15)
+    async def _after_reason_pick(self):
+        """بعد از انتخاب علت: «متوجه شدم» ← برگشت به تقویم (ضبط steps). اگر دکمه
+        نبود، مودال بسته و «مرحله ی بعدی» زده می‌شود (سازگار با حالت‌های دیگر)."""
+        if await click_text(self.page, *S.TURN_UNDERSTOOD, timeout=4_000):
+            await human_pause(self.page, 1500)
+            return
+        with contextlib.suppress(Exception):
+            if await visible(self.page.locator(".modal.show, .modal.in"), timeout=1500):
+                await click_text(self.page, "بستن", timeout=2_000)
+                await human_pause(self.page, 800)
+        with contextlib.suppress(Exception):
+            nxt = self.page.locator(S.TURN_NEXT)
+            if await visible(nxt, timeout=4000):
+                await nxt.first.click()
+                await human_pause(self.page, 2000)
+
+    async def _click_reason_row(self, pat) -> bool:
+        """کلیک روی اولین ردیفِ قابل‌مشاهده‌ی منطبق (دکمه‌ی «انتخاب» یا خود ردیف)."""
         try:
             rows = self.page.locator("tr").filter(has_text=pat)
             for i in range(await rows.count()):
@@ -334,41 +507,83 @@ class Turn:
                 return True
         except Exception:
             pass
-        return await click_text(self.page, *S.TURN_REASON_15, timeout=6_000)
+        return False
 
+    async def _click_reason_15(self) -> bool:
+        """انتخاب ردیف ۱۵ فهرست علت‌ها (دستور کارفرما — همیشه همین ردیف).
+
+        ۱) ردیفی که متنش «درخواست جلب متهم» است؛
+        ۲) ردیفی که خانه‌ی شماره‌اش ۱۵ است (ترتیب فهرست ممکن است جابه‌جا شود)؛
+        ۳) ردیف پانزدهم جدول علت‌ها."""
+        if await self._click_reason_row(text_re(*S.TURN_REASON_15)):
+            return True
+        try:                                   # خانه‌ی شماره‌ی ۱۵
+            rows = self.page.locator(S.TURN_REASON_ROW)
+            if not await rows.count():
+                rows = self.page.locator("#btnUnitReferalReasonTypeModal ~ * tr, .modal tr")
+            for i in range(await rows.count()):
+                row = rows.nth(i)
+                if not await row.is_visible():
+                    continue
+                first_td = row.locator("td").first
+                num = normalize_fa(await first_td.inner_text(timeout=1_000)).strip()
+                if num == "15":
+                    btn = row.locator("button").first
+                    if await visible(btn, timeout=1_500):
+                        await btn.click()
+                    else:
+                        await row.click()
+                    return True
+        except Exception:
+            pass
+        try:                                   # ردیف پانزدهم
+            rows = self.page.locator("tr").filter(has_text=text_re("انتخاب"))
+            vis_rows = [r for r in range(await rows.count()) if await rows.nth(r).is_visible()]
+            if len(vis_rows) >= 15:
+                row = rows.nth(vis_rows[14])
+                btn = row.locator("button").first
+                if await visible(btn, timeout=1_500):
+                    await btn.click()
+                else:
+                    await row.click()
+                return True
+        except Exception:
+            pass
+        return False
+
+    async def _click_reason_text(self, label: str) -> bool:
+        """انتخاب علتِ جایگزین («ارائه دلائل» / «پیگیری پرونده»)."""
+        return await self._click_reason_row(text_re(label))
+
+    # ── خطای علت مراجعه (دستور کارفرما) ────────────────────────────────
     async def _fix_reason_error_if_any(self) -> bool:
-        """خطای «نمی توان علت مراجعه را ... انتخاب نمود» (دستور کارفرما):
+        """خطای «نمی توان علت مراجعه را ... انتخاب نمود» (دستور کارفرما — آبان ۱۴۰۵):
 
-        «مرحله ی قبلی» ← دکمه‌ی «فهرست علت ها» ← ردیف ۱۵ «درخواست جلب متهم» ←
-        «مرحله ی بعدی» ← ادامه‌ی همان روند تا اخذ نوبت.
+        «مرحله ی قبلی» (اگر روی تقویم هستیم) ← «فهرست علت ها» ← علت جایگزین:
+        اول «ارائه دلائل»، اگر باز هم همین خطا آمد «پیگیری پرونده» ← «متوجه شدم»
+        و ادامه‌ی همان روند تا اخذ نوبت. هر دو هم رد شدند ← TURN_REASON_FAILED.
         """
         if not await self._reason_error():
             return False
-        await self.job.say("🔁 سامانه علت مراجعه را نپذیرفت؛ علت را به «درخواست جلب متهم» "
-                           "(ردیف ۱۵) تغییر می‌دهم…")
+        await self._hide_message(("علت مراجعه", "نمی توان", "انتخاب"))   # پیام کهنه
+        if not self._reason_fallbacks:
+            raise FlowError("TURN_REASON_REJECTED", "all reasons rejected by unit", T.TURN_REASON_FAILED)
+        label = self._reason_fallbacks.pop(0)
+        await self.job.say(f"🔁 سامانه علت مراجعه را نپذیرفت؛ علت را به «{label}» تغییر می‌دهم…")
         await self._close_alert()
-        prev = self.page.locator(S.TURN_PREV)
-        if not await visible(prev, timeout=6_000):
-            raise FlowError("PARSE_CHANGED", "prev-step button not found")
-        await prev.first.click()
-        await human_pause(self.page, 2000)
-        if not await visible(self.page.locator(S.TURN_REASON_BTN), timeout=8_000):
+        if not await visible(self.page.locator(S.TURN_REASON_BTN), timeout=2500):
+            prev = self.page.locator(S.TURN_PREV)
+            if not await visible(prev, timeout=6_000):
+                raise FlowError("PARSE_CHANGED", "prev-step button not found")
+            await prev.first.click()
+            await human_pause(self.page, 2000)
+        if not await visible(self.page.locator(S.TURN_REASON_BTN), timeout=8000):
             raise FlowError("PARSE_CHANGED", "reason-list button not found")
         await self.page.locator(S.TURN_REASON_BTN).first.click()
         await human_pause(self.page, 1500)
-        if not await self._click_reason_15():
-            raise FlowError("PARSE_CHANGED", "reason row 15 (درخواست جلب متهم) not found")
-        await human_pause(self.page, 1500)
-        # اگر مودال علت‌ها باز ماند بسته می‌شود؛ سپس «مرحله ی بعدی» برای برگشتن به تقویم
-        with contextlib.suppress(Exception):
-            if await visible(self.page.locator(".modal.show, .modal.in"), timeout=1500):
-                await click_text(self.page, "بستن", timeout=2_000)
-                await human_pause(self.page, 800)
-        with contextlib.suppress(Exception):
-            nxt = self.page.locator(S.TURN_NEXT)
-            if await visible(nxt, timeout=4_000):
-                await nxt.first.click()
-                await human_pause(self.page, 2000)
+        if not await self._click_reason_text(label):
+            raise FlowError("PARSE_CHANGED", f"reason row '{label}' not found")
+        await self._after_reason_pick()
         await self._role_or_raise()
         return True
 
@@ -400,7 +615,7 @@ class Turn:
         return False
 
     async def _wait_turn_table(self):
-        """صبر تا جدول ساعت‌های روز لود شود یا پیام خطای روز/علت مراجعه بیاید."""
+        """صبر تا جدول ساعت‌های روز لود شود یا پیام خطای روز/علت مراجعه/بازه بیاید."""
         async def _has_times() -> bool:
             return bool(await self.page.evaluate(TIMES_JS))
 
@@ -408,6 +623,7 @@ class Turn:
             "times": _has_times,
             "error": self._day_error,
             "reason": self._reason_error,
+            "range": self._range_error,
         }, timeout_ms=12_000)
         await human_pause(self.page, 600)
 
@@ -428,7 +644,8 @@ class Turn:
         return await click_text(self.page, *S.TURN_YES, timeout=6_000)
 
     async def _try_slots(self, target: dt.date, tries: int) -> tuple[str | None, int]:
-        """ساعت‌های آزادِ همین روز را به‌ترتیب امتحان می‌کند.
+        """ساعت‌های آزادِ همین روز را به‌ترتیب امتحان می‌کند (دستور کارفرما:
+        دونه‌دونه روزها/ساعت‌ها تا پیدا شدن نوبتِ خالی — ضبط steps 2).
 
         ساعت‌های «تکمیل ظرفیت» (کلاس disable / State==2) هرگز کلیک نمی‌شوند.
         خروجی: (متن نوبتِ ثبت‌شده یا None، تعداد تلاش‌های مصرف‌شده).
@@ -455,6 +672,8 @@ class Turn:
             if status == 200 or "#/Detail" in self.page.url:
                 return (f"روز {fa_date(target)} ({weekday_fa(target)}) ساعت {to_fa_digits(t['time'])}",
                         tries)
+            # متن هشدارِ خطا قبل از بستن خوانده می‌شود (مثل خطای بازه‌ی فعال — steps 2)
+            self._last_create_error = await self._alert_text()
             await click_text(self.page, *S.TURN_CLOSE, timeout=4000)
         return None, tries
 
@@ -462,11 +681,21 @@ class Turn:
         """روز و ساعتِ اولین نوبتِ خالی (دستور کارفرما — آبان ۱۴۰۵):
 
         از «فردا» شروع می‌شود (روز جاری انتخاب نمی‌شود)؛ پنجشنبه/جمعه/تعطیل رسمی رد
-        می‌شود؛ اگر همه‌ی ساعت‌های یک روز «تکمیل ظرفیت» بود، روز بعدی امتحان می‌شود.
+        می‌شود؛ روزها دونه‌دونه چک می‌شوند (ضبط steps 2)؛ خطای علت مراجعه ←
+        «ارائه دلائل» و سپس «پیگیری پرونده»؛ خطای «طبق تنظیمات شعبه... فعال است» ←
+        روزهای قبل از شروعِ بازه رد و پایانِ بازه ← «کامل پر؛ ۲۴ ساعت دیگر ساعت ۸ صبح».
         """
         await self.job.ask_choice(T.TURN_BOOK_CONFIRM, [("ok", "✅ بله، ثبت کن")])
         tries = 0
-        for target in turn_candidate_days(config.TURN_MAX_DAY_LOOKAHEAD):
+        days = turn_candidate_days(config.TURN_MAX_DAY_LOOKAHEAD)
+        i = 0
+        while i < len(days):
+            target = days[i]
+            i += 1
+            # بازه‌ی فعالِ شعبه معلوم شده و این روز قبل از شروعِ آن است ← رد
+            ar_start = self._active_range[0]
+            if ar_start and target < ar_start:
+                continue
             for _round in range(3):        # دور بعدی فقط بعد از اصلاح خطای «علت مراجعه»
                 if not await self._select_day(target):
                     break                  # چنین روزی در تقویم قابل انتخاب نبود ← روز بعد
@@ -477,6 +706,9 @@ class Turn:
                     log.info("turn day %s blocked: %s", target, err[:150])
                     await self._close_alert()
                     break
+                rng = await self._range_error()
+                if rng and await self._handle_range_error(rng, target):
+                    break                  # روز قبل از شروعِ بازه‌ی فعال بود ← روزهای بعدی
                 if await self._reason_error():
                     await self._fix_reason_error_if_any()
                     continue               # علت مراجعه اصلاح شد ← دوباره همین روز
@@ -494,8 +726,23 @@ class Turn:
                 if await self._reason_error():
                     await self._fix_reason_error_if_any()
                     continue               # دوباره همین روز
+                rng = await self._range_error()
+                if rng and await self._handle_range_error(rng, target):
+                    break                  # خطای بازه بعد از ثبت ناموفق ← روزهای بعدی
                 break                      # همه‌ی ساعت‌ها «تکمیل ظرفیت» بود ← روز بعد
         raise FlowError("NO_SLOT", "no free slot", "⚠️ نوبت خالی پیدا نشد. کمی بعد دوباره امتحان کنید.")
+
+    async def go_home(self):
+        """«صفحه اصلی» نوبت‌دهی (#btnHome) — بین نوبت‌های متوالی (ضبط steps:
+        بعد از چاپ، #btnHome ← «اخذ نوبت بر اساس شماره پرونده» برای نوبت بعدی)."""
+        with contextlib.suppress(Exception):
+            if await visible(self.page.locator(S.TURN_HOME), timeout=4_000):
+                await self.page.locator(S.TURN_HOME).first.click()
+                await human_pause(self.page, 2000)
+                return
+        with contextlib.suppress(Exception):
+            await self.page.goto(config.TURN_URL, wait_until="domcontentloaded", timeout=45_000)
+            await human_pause(self.page, 2000)
 
     async def print_ticket(self) -> bytes:
         with contextlib.suppress(Exception):
@@ -527,15 +774,51 @@ def _site_message(txt: str) -> str:
     return "پیام مشخصی نمایش داده نشد."
 
 
-async def work_turn(ctx, br, login, page, number: str, by: str):
+async def work_turn(ctx, br, login, page, numbers: list[str], by: str, on_booked=None):
+    """ثبت نوبت برای یک یا چند پرونده (دستور کارفرما — آبان ۱۴۰۵).
+
+    «ثبت چند نوبت»: هر شماره عین ضبط steps — جستجو ← تأیید کاربر ← بررسی ←
+    دادورز ← علت ۱۵ ← روز/ساعت ← چاپ؛ بعد از هر نوبت «صفحه اصلی» و شروع
+    روند تازه برای شماره‌ی بعدی. خطای یک شماره بقیه را متوقف نمی‌کند.
+
+    on_booked(number): بعد از هر ثبتِ موفق صدا زده می‌شود (مثلاً برای «استفاده‌شده»
+    کردن فاکتور، تا با دکمه‌ی شروعِ دوباره نوبتِ ثبت‌شده تکراری ثبت نشود).
+    خروجی: {"booked": [...], "failed": [...]}.
+    """
     t = Turn(ctx, br, login, page)
-    await t.select_case(number, by)
-    await t.select_daadvarz()
-    await t.select_reason()
-    when = await t.book()
-    pdf = await t.print_ticket()
-    await ctx.step("L11")
-    await ctx.job.send_pdf(pdf, f"nobat_{number}.pdf",
-                           f"✅ نوبت ملاقات با دادورز ثبت شد ({when}).\nپرونده/بایگانی: {to_fa_digits(number)}\n"
-                           "لطفاً ۱۵ دقیقه قبل از نوبت با کارت ملی حاضر شوید.")
-    ctx.new_items = 1
+    numbers = [n for n in numbers if n]
+    booked, failed = [], []
+    if len(numbers) > 1:
+        await ctx.job.say(T.TURN_MULTI_START.format(n=to_fa_digits(len(numbers))))
+    for i, number in enumerate(numbers):
+        if i:
+            await t.go_home()
+        try:
+            await t.select_case(number, by)
+            await t.select_daadvarz()
+            await t.select_reason()
+            when = await t.book()
+            pdf = await t.print_ticket()
+        except (JobCancelled, UserTimeout):
+            raise                          # لغو/مهلت کاربر ← توقف کل کار
+        except FlowError as e:
+            if len(numbers) == 1:
+                raise
+            await ctx.job.say(f"⚠️ نوبت {to_fa_digits(number)} ثبت نشد:\n{e.user_message or T.SITE_DOWN}")
+            await ctx.report(e.category, f"turn {number}: {str(e)[:150]}")
+            failed.append(number)
+            continue
+        await ctx.step("L11")
+        await ctx.job.send_pdf(pdf, f"nobat_{number}.pdf",
+                               f"✅ نوبت ملاقات با دادورز ثبت شد ({when}).\nپرونده/بایگانی: {to_fa_digits(number)}\n"
+                               "لطفاً ۱۵ دقیقه قبل از نوبت با کارت ملی حاضر شوید.")
+        ctx.new_items += 1
+        booked.append(number)
+        if on_booked is not None:
+            with contextlib.suppress(Exception):
+                await on_booked(number)
+    if len(numbers) > 1:
+        await ctx.job.say(T.TURN_MULTI_DONE.format(
+            done="، ".join(to_fa_digits(n) for n in booked) or "—",
+            failed="، ".join(to_fa_digits(n) for n in failed) or "—"))
+    return {"booked": booked, "failed": failed}

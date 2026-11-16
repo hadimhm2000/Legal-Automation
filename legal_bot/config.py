@@ -137,6 +137,8 @@ DATE_WINDOW_DAYS = _int("DATE_WINDOW_DAYS", 30)
 TURN_MAX_SLOT_TRIES = _int("TURN_MAX_SLOT_TRIES", 8)
 # چند روز نامزد (از فردا؛ بدون پنجشنبه/جمعه/تعطیل رسمی) برای یافتن نوبت خالی
 TURN_MAX_DAY_LOOKAHEAD = _int("TURN_MAX_DAY_LOOKAHEAD", 14)
+# حداکثر تعداد نوبت در یک درخواستِ «چند نوبت» (دستور کارفرما — آبان ۱۴۰۵)
+TURN_MAX_MULTI = _int("TURN_MAX_MULTI", 5)
 
 # ── کارت «ابلاغیه بازنشده» و بازیابی جدول خالی (دستور کارفرما — آبان ۱۴۰۵) ──
 BADGE_WAIT_SEC = _int("BADGE_WAIT_SEC", 30)              # صبر برای لود شدن عدد کارت (قبل از ریلود سایت)
