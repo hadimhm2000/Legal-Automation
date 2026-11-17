@@ -66,18 +66,41 @@ def _validate_otp(v):
 # ── قاعده‌ی کارفرما (آبان ۱۴۰۵ — ضبط steps 3): پیام «رمز موقت جدید برای شماره
 # همراه شما ارسال شد...» روی صفحه‌ی ورود یعنی خود سامانه رمز تازه فرستاده ←
 # دکمه‌ی «ارسال رمز موقت» به کاربر نمایش داده نمی‌شود؛ پیام نبود ← دکمه حتماً هست.
-# زمان آخرین ارسالِ دستیِ رمز موقت هر کاربر فقط برای ثبت/گزارش در settings می‌ماند.
+# قاعده‌ی کارفرما (تصویر ارسالی): بعد از یک‌بار «ارسال رمز موقت»، دکمه‌ی ارسال تا
+# ۳ ساعت در پیام‌های بعدی نمایش داده نمی‌شود. زمان آخرین ارسالِ دستیِ رمز موقت
+# هر کاربر در رم (سریع) و settings (ماندگار بین ری‌استارت‌ها) می‌ماند.
 _OTP_RESEND_RAM: dict[int, float] = {}
 
 
 async def otp_mark_resend(ctx, user_id: int):
-    """ثبت زمان ارسال دستی رمز موقت (برای گزارش مدیر)."""
+    """ثبت زمان ارسال دستی رمز موقت (شروع قفل ۳ ساعته‌ی دکمه‌ی ارسال)."""
     now = time.time()
     _OTP_RESEND_RAM[user_id] = now
     db = getattr(ctx, "db", None)
     if db is not None:
         with contextlib.suppress(Exception):
             await db.set_setting(f"otp_resend:{user_id}", str(now))
+
+
+async def otp_resend_in_cooldown(ctx, user_id: int) -> bool:
+    """آیا ارسالِ دستیِ رمز موقت در ۳ ساعت اخیر بوده؟ (دستور کارفرما: بعد از یک
+    ارسال دستی، دکمه‌ی «ارسال رمز موقت» تا ۳ ساعت در هیچ پیام بعدی نیست.)
+
+    اول رمِ پردازش؛ نبود (مثل ری‌استارت ربات) ← از settings خوانده و دوباره
+    کش می‌شود. بدون دیتابیس هم فقط رم کافی است."""
+    now = time.time()
+    last = _OTP_RESEND_RAM.get(user_id)
+    if last is None:
+        db = getattr(ctx, "db", None)
+        raw = None
+        if db is not None:
+            with contextlib.suppress(Exception):
+                raw = await db.get_setting(f"otp_resend:{user_id}")
+        if raw:
+            with contextlib.suppress(ValueError, TypeError):
+                last = float(raw)
+                _OTP_RESEND_RAM[user_id] = last
+    return bool(last is not None and 0 <= now - last < config.OTP_RESEND_COOLDOWN_SEC)
 
 
 async def collect_credentials(job, ctx):
@@ -312,13 +335,16 @@ class SanaLogin:
         while True:
             if vault.get(job.owner, "otp") is None:
                 # دکمه‌ی «ارسال رمز موقت» فقط وقتی هست که پیامِ ارسالِ خودکار روی
-                # صفحه نباشد (دستور کارفرما — ضبط steps 3).
-                extra = None if await self._otp_auto_sent(page) else [("resend", T.SEND_OTP_BTN)]
+                # صفحه نباشد (دستور کارفرما — ضبط steps 3) و در ۳ ساعت اخیر
+                # ارسالِ دستی نداشته باشیم (دستور کارفرما — یک‌بار ارسال ←
+                # تا ۳ ساعت دکمه‌ی ارسال در پیام‌های بعدی نیست).
+                hidden = await self._otp_auto_sent(page) or await otp_resend_in_cooldown(self.ctx, job.user_id)
+                extra = None if hidden else [("resend", T.SEND_OTP_BTN)]
                 res = await job.ask_secret("otp", prompt, _validate_otp, lambda v: "•" * len(v),
                                            extra_options=extra)
                 if res == ("choice", "resend"):
-                    await otp_mark_resend(self.ctx, job.user_id)
                     await self._resend(page)
+                    await otp_mark_resend(self.ctx, job.user_id)
                     prompt = T.OTP_SENT
                     continue
             await self._type(page, S.OTP, "otp")

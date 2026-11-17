@@ -204,6 +204,17 @@ async def has_auto_tracking(db: DB, uid: int) -> bool:
     return bool(end and end > utcnow()) and not _is_restricted(s)
 
 
+async def has_active_subscription(db: DB, uid: int) -> tuple[bool, str | None]:
+    """حداقل یک اشتراک فعال (شروع رایگان یا پولی) — درِ امکان‌های ویژه‌ی مشترکین
+    (دستور کارفرما: ثبت یادآوری دلخواه). خروجی: (دار؟، علت: inactive | restricted)."""
+    s = await get(db, uid)
+    if s["status"] not in ACTIVE:
+        return False, "inactive"
+    if _is_restricted(s):
+        return False, "restricted"
+    return True, None
+
+
 async def case_cap(db: DB, uid: int) -> int:
     """سقف ثبت پرونده برای بررسی روزانه (قاعده ۲: پیگیری خودکار سقف پرونده دارد)."""
     if await has_auto_tracking(db, uid):

@@ -54,6 +54,8 @@ class FakeSession(BaseSession):
 async def env(db, monkeypatch):
     monkeypatch.setattr(config, "ADMIN_ID", ADMIN)
     monkeypatch.setattr(config, "BETA_IDS", {ADMIN})
+    monkeypatch.setattr(config, "BETA_OPEN_TO_ALL", False)   # ????? ?? BETA_IDS=* ?? .env
+    monkeypatch.setattr(config, "ADMIN_FREE", False)          # ????? ??? ?????? ??????? ?????
     monkeypatch.setattr(config, "HANDOFF_SECRET", "hs")
     import bot_main
 
@@ -92,6 +94,18 @@ def button(sess, label_part):
             if label_part in b.text:
                 return b.callback_data
     raise AssertionError(f"no button {label_part}: {sess.last_markup()}")
+
+
+def reply_kb_has(sess, text_part):
+    """آیا دکمه‌ای با این متن در کیبورد پاسخ (منوی پایین ربات) دیده شده؟"""
+    for m in sess.calls:
+        rm = getattr(m, "reply_markup", None)
+        if rm is not None and hasattr(rm, "keyboard"):
+            for row in rm.keyboard:
+                for b in row:
+                    if b and text_part in (b.text or ""):
+                        return True
+    return False
 
 
 async def test_user_journey(env, db):
@@ -196,6 +210,137 @@ async def test_turn_multi_invoice_amount_and_payload(env, db):
     inv = await db.one("SELECT * FROM invoices WHERE kind='turn'")
     assert inv["amount_toman"] == config.PRICE_TURN * 3
     assert inv["payload"] == "archive:0500732,0501667,0304293"
+
+
+async def test_turn_retry_allows_editing_case_number(env, db):
+    """دستور کارفرما: درخواستِ (پرداخت‌شده‌ی) استفاده‌نشده‌ی همان پرونده ← وقتی کاربر
+    روی «شروع ثبت نوبت با همین پرداخت» می‌زند، امکان ویرایش شماره پرونده دارد و
+    بعد از تأیید، مراحل شروع می‌شود (اینجا: لغو در مرحله‌ی رضایت داده‌ها)."""
+    from legal_bot.services import subscription as sub
+    from legal_bot.utils import to_fa_digits
+
+    bot, dp, sess = env
+    await send(bot, dp, f"/start {make_token(ADMIN, 'hs')}")
+    inv = await sub.create_invoice(db, ADMIN, "turn", payload="case:140213920001085354",
+                                   amount=config.PRICE_TURN, is_admin=False)
+    await db.execute("UPDATE invoices SET status='approved' WHERE code=?", (inv["code"],))
+    await send(bot, dp, T.M_TURN)                       # منوی نوبت ← درخواست استفاده‌نشده
+    assert button(sess, "شروع ثبت نوبت") == f"turn:go:{inv['code']}"
+    await press(bot, dp, f"turn:go:{inv['code']}")
+    await asyncio.sleep(0.2)
+    # پرسش ادامه/ویرایش با شماره‌ی ثبت‌شده‌ی فعلی (ارقام فارسی)
+    assert to_fa_digits("140213920001085354") in (sess.texts()[-1] or "")
+    await press(bot, dp, button(sess, "ویرایش"))        # ✏️ ویرایش شماره پرونده
+    await asyncio.sleep(0.2)
+    await send(bot, dp, "140513920000890035")           # شماره‌ی جدید (تکی ← دقیقاً ۱ شماره)
+    await asyncio.sleep(0.2)
+    assert to_fa_digits("140513920000890035") in (sess.texts()[-1] or "")   # تأیید نهایی
+    await press(bot, dp, button(sess, "تأیید و شروع"))
+    await asyncio.sleep(0.3)
+    # payload فاکتور با شماره‌ی اصلاح‌شده به‌روز شد
+    row = await db.one("SELECT payload FROM invoices WHERE code=?", (inv["code"],))
+    assert row["payload"] == "case:140513920000890035"
+    # بعد از تأیید، مراحل شروع شد ← اولین مرحله: رضایت داده‌ها ← لغو کاربر
+    assert any(T.CONSENT_TEXT == t for t in sess.texts())
+    await send(bot, dp, T.BACK)
+    await asyncio.sleep(0.3)
+    assert any(T.CANCELLED == t for t in sess.texts())
+    run = await db.one("SELECT * FROM check_runs ORDER BY id DESC LIMIT 1")
+    assert run["kind"] == "turn" and run["status"] == "cancelled"
+    # پرداخت همچنان محفوظ است (استفاده‌نشده)
+    assert (await db.one("SELECT status FROM invoices WHERE code=?", (inv["code"],)))["status"] == "approved"
+
+
+async def test_custom_reminder_flow_subscription_gated(env, db):
+    """دستور کارفرما: «➕ ثبت یادآوری جدید» — کاربر خودش برای تاریخ‌هایی اعلام یادآوری
+    می‌گذارد؛ فقط کاربران دارای حداقل یک اشتراک فعال."""
+    from legal_bot.utils import today_tehran, to_jalali_str
+
+    bot, dp, sess = env
+    await send(bot, dp, f"/start {make_token(ADMIN, 'hs')}")
+    await send(bot, dp, T.M_REMINDERS)                  # منوی گزارش‌ها و یادآوری‌ها
+    assert reply_kb_has(sess, T.R_NEW_REMINDER)         # دکمه‌ی جدید در منو
+    await send(bot, dp, T.R_NEW_REMINDER)               # بدون اشتراک فعال ← گیت
+    assert T.REMINDERS_NEED_PLAN in sess.texts()[-1]
+    rows = await db.all("SELECT * FROM reminders")
+    assert rows == []
+    # فعال‌سازی شروع رایگان (= حداقل یک اشتراک فعال)
+    await press(bot, dp, "plan:free")
+    await send(bot, dp, "09121234567")
+    await press(bot, dp, button(sess, "تایید قوانین"))
+    await asyncio.sleep(0.2)
+    await send(bot, dp, T.M_REMINDERS)
+    await send(bot, dp, T.R_NEW_REMINDER)
+    await asyncio.sleep(0.2)
+    # حالت «تاریخ مشخص» ← دو تاریخ آینده؛ تاریخ چسبیده («و») رد می‌شود
+    d1 = today_tehran() + dt.timedelta(days=40)
+    d2 = today_tehran() + dt.timedelta(days=60)
+    await press(bot, dp, button(sess, "تاریخ مشخص"))
+    await asyncio.sleep(0.2)
+    await send(bot, dp, f"{to_jalali_str(d1)} و {to_jalali_str(d2)}")
+    assert "معتبر نیست" in sess.texts()[-1]             # دو تاریخ در یک بخش ← رد
+    await send(bot, dp, f"{to_jalali_str(d1)}، {to_jalali_str(d2)}")
+    await asyncio.sleep(0.2)
+    # شماره پرونده/بایگانی اختیاری ← شماره‌ی نامعتبر (کوتاه) رد، سپس شماره‌ی درست
+    await send(bot, dp, "12")
+    assert any(T.R_REM_BAD_CASE == t for t in sess.texts()[-3:])   # خطا اعلام شد
+    await send(bot, dp, "140513920000890035")
+    await asyncio.sleep(0.2)
+    await press(bot, dp, button(sess, "بدون توضیح"))    # توضیح: بدون
+    await asyncio.sleep(0.2)
+    assert any(T.R_REM_CONFIRM in (t or "") for t in sess.texts()[-2:])   # تأیید نهایی
+    await press(bot, dp, button(sess, "تأیید و ثبت"))
+    await asyncio.sleep(0.3)
+    assert any("یادآوری ثبت شد" in (t or "") for t in sess.texts()[-3:])
+    rows = await db.all("SELECT * FROM reminders WHERE bale_id=? AND kind='custom'", (ADMIN,))
+    assert len(rows) == 2
+    assert {r["due_date"] for r in rows} == {d1.isoformat(), d2.isoformat()}
+    assert rows[0]["case_number"] == "140513920000890035"
+    assert rows[0]["note"] is None and rows[0]["status"] == "open"
+
+
+async def test_custom_reminder_days_mode_and_cap(env, db):
+    """حالت «چند روز دیگر» (دکمه‌ی آماده) و سقف یادآوری بازِ دلخواه."""
+    from legal_bot import config as cfg
+    from legal_bot.utils import today_tehran
+
+    bot, dp, sess = env
+    await send(bot, dp, f"/start {make_token(ADMIN, 'hs')}")
+    await press(bot, dp, "guide:ack")
+    await press(bot, dp, "plan:free")
+    await send(bot, dp, "09301112233")
+    await press(bot, dp, button(sess, "تایید قوانین"))
+    await asyncio.sleep(0.2)
+    await send(bot, dp, T.M_REMINDERS)
+    await send(bot, dp, T.R_NEW_REMINDER)
+    await asyncio.sleep(0.2)
+    await press(bot, dp, button(sess, "چند روز دیگر"))
+    await asyncio.sleep(0.2)
+    await press(bot, dp, button(sess, "۱۰ روز"))          # دکمه‌ی آماده‌ی «۱۰ روز»
+    await asyncio.sleep(0.2)
+    await press(bot, dp, button(sess, "بدون شماره"))
+    await asyncio.sleep(0.2)
+    await press(bot, dp, button(sess, "بدون توضیح"))
+    await asyncio.sleep(0.2)
+    await press(bot, dp, button(sess, "تأیید و ثبت"))
+    await asyncio.sleep(0.3)
+    due = (today_tehran() + dt.timedelta(days=10)).isoformat()
+    rows = await db.all("SELECT * FROM reminders WHERE bale_id=? AND kind='custom'", (ADMIN,))
+    assert len(rows) == 1 and rows[0]["due_date"] == due
+    assert rows[0]["case_number"] is None and rows[0]["archive_number"] is None
+    # سقف باز: پر کردن تا سقف ← ثبت جدید رد می‌شود
+    await db.execute("UPDATE reminders SET status='open'")
+    n_more = cfg.MAX_CUSTOM_REMINDERS_OPEN - 1
+    for i in range(n_more):
+        await db.execute("INSERT INTO reminders(bale_id,kind,due_date,status,created_at) "
+                         "VALUES(?, 'custom', ?, 'open', 'x')", (ADMIN, due))
+    await send(bot, dp, T.R_NEW_REMINDER)
+    await asyncio.sleep(0.2)
+    await press(bot, dp, button(sess, "چند روز دیگر"))
+    await asyncio.sleep(0.2)
+    await send(bot, dp, "30")                           # عدد آزاد
+    await asyncio.sleep(0.3)
+    assert any("یادآوری باز دارید" in (t or "") for t in sess.texts()[-2:])
 
 
 async def send_photo(bot, dp, file_id, fuid):

@@ -155,6 +155,11 @@ EMPTY_LIST_RETRY_SEC = _int("EMPTY_LIST_RETRY_SEC", 10)  # فاصله‌ی فش�
 # سقف فشار «۳ ماه قبل» = ۳ بار؛ بعد از آن پیام «۹ ماه اخیر ابلاغ جدیدی نیست» (دستور کارفرما)
 EMPTY_LIST_MAX_PRESSES = _int("EMPTY_LIST_MAX_PRESSES", 3)
 
+# ── ثبت یادآوری دلخواه (دستور کارفرما): کاربر خودش برای تاریخ‌هایی اعلام
+# یادآوری می‌گذارد؛ فقط با حداقل یک اشتراک فعال. ──
+MAX_REMINDER_DATES_PER_MSG = _int("MAX_REMINDER_DATES_PER_MSG", 10)  # حداکثر تاریخ در هر ثبت
+MAX_CUSTOM_REMINDERS_OPEN = _int("MAX_CUSTOM_REMINDERS_OPEN", 50)    # سقف یادآوری بازِ دلخواه هر کاربر
+
 # ── اطلاع‌رسانی پرونده (resultcase) — طبق دستور آبان ۱۴۰۵ و ضبط‌های A/B/C/D/GGG ──
 RC_PAGE_SIZE = _int("RC_PAGE_SIZE", 100)            # تعداد نمایش در هر صفحه همیشه ۱۰۰
 RC_MAX_PAGES = _int("RC_MAX_PAGES", 50)             # سقف ورق‌زدن صفحه‌های نتیجه

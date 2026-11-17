@@ -23,8 +23,8 @@ def notices_menu():
 
 
 def reports_menu():
-    return reply([[T.R_CURRENT], [T.R_DONE], [T.R_ALL], [T.R_HEARINGS], [T.R_OPEN_REMINDERS],
-                  [T.BACK, T.M_CANCEL]])
+    return reply([[T.R_NEW_REMINDER], [T.R_CURRENT], [T.R_DONE], [T.R_ALL], [T.R_HEARINGS],
+                  [T.R_OPEN_REMINDERS], [T.BACK, T.M_CANCEL]])
 
 
 def cases_menu():

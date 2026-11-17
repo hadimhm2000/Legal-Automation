@@ -189,3 +189,28 @@ async def test_abuse_restricts_and_reports(db):
     await db.execute("UPDATE check_runs SET started_at=? WHERE bale_id=10", (old,))
     ok, _ = await sub.can_inquiry(db, 10)
     assert ok
+
+
+async def test_has_active_subscription_gates_reminder_feature(db):
+    """دستور کارفرما: ثبت یادآوری دلخواه فقط با «حداقل یک اشتراک فعال» — شروع
+    رایگان و پولی هر دو فعال‌اند؛ حساب جدید/قفل/محدود فعال نیستند."""
+    await db.upsert_user(20, 20)
+    ok, why = await sub.has_active_subscription(db, 20)
+    assert not ok and why == "inactive"                    # حساب جدید
+    # شروع رایگان = اشتراک فعال
+    await sub.save_phone(db, 20, "09121110000")
+    assert await sub.activate_free(db, 20)
+    ok, why = await sub.has_active_subscription(db, 20)
+    assert ok and why is None
+    # پایان شروع رایگان (قفل) ← غیرفعال
+    await db.execute("UPDATE subscriptions SET inquiries_left=0 WHERE bale_id=20")
+    ok, why = await sub.has_active_subscription(db, 20)
+    assert not ok and why == "inactive"
+    # پولی فعال ← فعال؛ محدودیت موقت ← غیرفعال (restricted)
+    await _activate(db, 20, "base")
+    await db.execute("UPDATE subscriptions SET status='PAID_ACTIVE' WHERE bale_id=20")
+    ok, _ = await sub.has_active_subscription(db, 20)
+    assert ok
+    await sub.restrict(db, 20, 5, "تست")
+    ok, why = await sub.has_active_subscription(db, 20)
+    assert not ok and why == "restricted"

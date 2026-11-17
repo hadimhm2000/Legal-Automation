@@ -10,6 +10,7 @@
 import asyncio
 import base64
 import json
+import time
 import types
 
 import pytest
@@ -33,7 +34,7 @@ LOGIN = """<html><body><form onsubmit="return false">
 <div id=cap style="display:none"><img src="/Login/GetCaptchaImage" width=100 height=30><input id=captcha></div>
 <div id=otpbox style="display:none"><input id=otpPassowrd>
 <p id=otpauto style="display:none">رمز موقت جدید برای شماره همراه شما ارسال شد. پس از دریافت، جهت ورود از رمز موقت جدید استفاده نمایید.</p>
- <span id=resend onclick="fetch('/Login/SendOtpPasswordForPerson',{method:'POST'});document.getElementById('otpauto').style.display='block'">ارسال مجدد رمز موقت</span></div>
+ <span id=resend onclick="fetch('/Login/SendOtpPasswordForPerson',{method:'POST'});__RESEND_AUTO__">ارسال مجدد رمز موقت</span></div>
 <div id=err></div></form>
 <script>
 const $ = s => document.querySelector(s);
@@ -57,7 +58,8 @@ ERROR_PAGE = "<html><body><h1>خطای سامانه</h1></body></html>"
 
 
 class Site:
-    def __init__(self, good_pw="goodpw", otp_auto_sent=False, error_page_first=False):
+    def __init__(self, good_pw="goodpw", otp_auto_sent=False, error_page_first=False,
+                 resend_shows_auto=True):
         self.good_pw = good_pw
         self.captcha_required = False
         self.resends = 0
@@ -65,7 +67,10 @@ class Site:
         self.otp_auto_sent = otp_auto_sent
         self.error_page_first = error_page_first
         self.error_pages = 0
-        self.login_html = LOGIN.replace("__AUTO__", "true" if otp_auto_sent else "false")
+        self.login_html = (LOGIN.replace("__AUTO__", "true" if otp_auto_sent else "false")
+                           .replace("__RESEND_AUTO__",
+                                    "document.getElementById('otpauto').style.display='block'"
+                                    if resend_shows_auto else "void(0)"))
 
     async def handle(self, route):
         req = route.request
@@ -160,6 +165,10 @@ def fast(monkeypatch):
     monkeypatch.setattr(config, "TYPE_DELAY_MS", 1)
     monkeypatch.setattr(config, "STEP_PAUSE_MS", 30)
     monkeypatch.setattr(config, "HEADLESS", True)
+    # قفل ۳ ساعته‌ی «ارسال رمز موقت» بین تست‌ها نشت نمی‌کند (هر تست از نو شروع می‌شود)
+    sana_login._OTP_RESEND_RAM.clear()
+    yield
+    sana_login._OTP_RESEND_RAM.clear()
 
 
 async def _run(site, answers, log: list | None = None):
@@ -210,8 +219,8 @@ async def test_full_login_with_wrong_password_captcha_and_wrong_otp():
     assert bot.photos == 1                       # فقط تصویر کپچا
     assert steps[:4] == ["L04", "L05", "L06", "L07"]
     # پیام پرسش اول: «ارسال شد؛ وارد کنید» + توصیه‌ی ۳۰ دقیقه
-    otp_prompt = next(t for t in bot.texts if t and "رمز موقت برای شما پیامک شد" in t)
-    assert "۳۰ دقیقه" in otp_prompt
+    otp_prompt = next(t for t in bot.texts if t and T.ASK_OTP[:16] in t)
+    assert "ارسال رمز موقت" in otp_prompt
     # پرسش اول دکمه‌ی «ارسال رمز موقت» دارد (پیامِ خودکار نبود — دستور کارفرما)
     first_opts = next(o for p, o in log if p == otp_prompt)
     assert "resend" in first_opts
@@ -261,6 +270,52 @@ async def test_otp_resend_button_hidden_when_site_auto_sent_message():
         assert "resend" not in opts               # دکمه‌ی ارسال هرگز نمایش داده نشد
     # پیام پرسش همان «رمز موقت جدید سامانه» است (نه پیام عمومی)
     assert any("سامانه خودش" in (p or "") for p, _o in otp_prompts)
+
+
+async def test_otp_resend_cooldown_hides_button_for_three_hours():
+    """دستور کارفرما (تصویر ارسالی): بعد از یک‌بار «ارسال رمز موقت»، رمز موقت جدید
+    ارسال می‌شود و در پیام‌های بعدی (حتی بدون پیامِ ارسالِ خودکار روی صفحه) دکمه‌ی
+    «ارسال رمز موقت» تا ۳ ساعت دیگر نمایش داده نمی‌شود."""
+    # این سایت بعد از ارسالِ دستی، پیامِ «رمز موقت جدید ... ارسال شد» را نشان نمی‌دهد
+    site = Site(resend_shows_auto=False)
+    answers = [
+        (T.ASK_NATIONAL_CODE, ("text", "4420160616")),
+        (T.ASK_PASSWORD, ("text", "goodpw")),
+        # پیامِ ارسالِ خودکار روی صفحه نیست و هنوز ارسالِ دستی نداده ← دکمه هست
+        (T.ASK_OTP[:16], ("choice", "resend")),
+        # رمز موقت جدید ارسال شد؛ پیام بعدی نباید دکمه‌ی ارسال داشته باشد
+        ("دوباره برای شما ارسال شد", ("text", "111111")),      # اشتباه
+        # پیامِ بعدی (رمز نادرست) هم نباید دکمه داشته باشد — قفل ۳ ساعته
+        ("رمز موقت واردشده صحیح نبود", ("text", "123456")),   # درست
+    ]
+    log = []
+    bot, job, steps, ok = await _run(site, answers, log=log)
+    assert ok
+    assert site.resends == 1                       # فقط همان یک ارسال دستی
+    otp_prompts = [(p, o) for p, o in log if "رمز موقت" in (p or "") and "مقدار دریافتی" not in p]
+    assert len(otp_prompts) == 3
+    assert "resend" in otp_prompts[0][1]           # قبل از ارسال دستی: دکمه بود
+    for _p, opts in otp_prompts[1:]:               # بعد از آن: هیچ پیامی دکمه ندارد
+        assert "resend" not in opts
+    # قفل برای همین کاربر فعال است
+    assert await sana_login.otp_resend_in_cooldown(types.SimpleNamespace(), job.user_id)
+
+
+async def test_otp_resend_cooldown_persists_in_settings(db):
+    """زمان آخرین ارسال دستی در settings می‌ماند: بعد از ری‌استارت ربات (خالی شدن
+    رم) هم قفل ۳ ساعته برقرار است و بعد از ۳ ساعت دکمه برمی‌گردد."""
+    sana_login._OTP_RESEND_RAM.clear()
+    ctx = types.SimpleNamespace(db=db)
+    assert not await sana_login.otp_resend_in_cooldown(ctx, 42)     # هیچ‌وقت ارسال نداده
+    await sana_login.otp_mark_resend(ctx, 42)
+    assert await sana_login.otp_resend_in_cooldown(ctx, 42)         # همین حالا قفل است
+    sana_login._OTP_RESEND_RAM.clear()                              # شبیه ری‌استارت ربات
+    assert await sana_login.otp_resend_in_cooldown(ctx, 42)         # از settings خوانده شد
+    # ۳ ساعت گذشت ← قفل تمام و دکمه‌ی ارسال برمی‌گردد
+    await db.set_setting("otp_resend:42", str(time.time() - config.OTP_RESEND_COOLDOWN_SEC - 1))
+    sana_login._OTP_RESEND_RAM.clear()
+    assert not await sana_login.otp_resend_in_cooldown(ctx, 42)
+    sana_login._OTP_RESEND_RAM.clear()
 
 
 async def test_error_page_on_entry_closes_tab_and_reenters():

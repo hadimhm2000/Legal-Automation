@@ -1012,7 +1012,8 @@ MY_CASES_HTML = """<html><head><meta charset="utf-8"><style>.hide{display:none}<
     <input id="txtCaseNoSearch" placeholder="شماره پرونده">
     <input id="txtArchiveNoSearch" placeholder="شماره بایگانی شعبه">
     <button onclick="retrieve()">بازیابی پرونده</button>
-    <div id="alertBox" class="hide"><p id="alertText">موردی یافت نشد</p>
+    <div id="alertBox" class="hide sweet-alert showSweetAlert visible">
+      <h2 id="alertText">هیچ پرونده ای با شماره «140213920001085354» یافت نشد .</h2>
       <button onclick="document.getElementById('alertBox').classList.add('hide')">بستن</button></div>
     <table><tbody id="tbody"></tbody></table>
   </div>
@@ -1084,6 +1085,8 @@ async def test_select_case_by_archive_fills_field_and_asks_confirmation():
 
 
 async def test_select_case_by_archive_not_found_closes_alert_and_raises():
+    """دستور کارفرما: sweet-alertِ «هیچ پرونده ای با شماره «...» یافت نشد» بعد از
+    استعلام ← هشدار بسته می‌شود و روند متوقف می‌گردد."""
     br = await _open_my_cases([])
     try:
         t, _ = make_turn(br, br.page)
@@ -1094,8 +1097,30 @@ async def test_select_case_by_archive_not_found_closes_alert_and_raises():
             "() => document.getElementById('alertBox').classList.contains('hide')")
     finally:
         await br.close()
-    assert ei.value.category == "CASE_NOT_FOUND"
+    assert ei.value.category == "TURN_CASE_NOT_FOUND"
     assert alert_hidden
+
+
+async def test_select_case_by_case_number_not_found_stops_with_clear_message():
+    """دستور کارفرما (HTML ارسالی): بعد از استعلام، sweet-alert «هیچ پرونده ای با شماره
+    «...» یافت نشد .» ← روند متوقف می‌شود و به کاربر گفته می‌شود اسمش در پرونده نیست
+    یا شماره پرونده اشتباه است (ادامه‌ی خودکار با همان شماره‌ی غلط ممنوع)."""
+    br = await _open_my_cases([])
+    try:
+        t, _ = make_turn(br, br.page)
+        with pytest.raises(FlowError) as ei:
+            await t.select_case("140213920001085354", "case")
+        alert_hidden = await br.page.evaluate(
+            "() => document.getElementById('alertBox').classList.contains('hide')")
+        # مسیر جایگزین (پرکردن مستقیم #txtCaseNo با همان شماره‌ی غلط) اجرا نشد
+        case_input = await br.page.evaluate("() => document.getElementById('txtCaseNo').value")
+    finally:
+        await br.close()
+    assert ei.value.category == "TURN_CASE_NOT_FOUND"
+    assert "اسم شما در پرونده نیست" in ei.value.user_message
+    assert "شماره پرونده اشتباه" in ei.value.user_message
+    assert alert_hidden                    # هشدار سامانه بسته شد
+    assert case_input == ""                # شماره‌ی غلط دوباره پر نشد
 
 
 async def test_select_case_by_case_number_fills_case_field():
