@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 
 from aiogram import F, Router
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from .. import config, keyboards as K, texts as T
+from ..db import parse_iso
 from ..services import eblagh, reports
+from ..services import subscription as sub
 from ..services.reminders import done_kb, reminder_text
 from ..services.session import Job, JobCancelled, UserTimeout, jobs
-from ..utils import fa_date, parse_jalali, to_fa_digits, today_tehran, validate_case_number, validate_notice_number
-from .common import browser_job, require_inquiry, require_inquiry_cb, require_service, safe_answer, start_job
+from ..utils import (clean_digits, count_jalali_dates, fa_date, parse_jalali, to_en_digits, to_fa_digits,
+                     today_tehran, validate_archive_number, validate_case_number, validate_notice_number,
+                     weekday_fa)
+from .common import browser_job, require_inquiry, require_inquiry_cb, require_service, safe_answer, show_plans, start_job
 
 router = Router(name="notices")
 
@@ -49,8 +54,6 @@ async def check_new(message: Message, db):
 @router.callback_query(F.data.in_({"chk:go:scheduled_08", "chk:go:scheduled_18", "chk:go:manual"}))
 async def check_from_prompt(cb: CallbackQuery, db):
     await safe_answer(cb)
-    from ..services import subscription as sub
-
     if jobs.busy(cb.from_user.id):
         await cb.message.answer(T.JOB_BUSY)
         return
@@ -204,8 +207,6 @@ async def rem_add(cb: CallbackQuery, db):
                 kind, v = await job.ask("چند روز تا آخرین مهلت دارید؟ یک گزینه را بزنید یا عدد بفرستید:",
                                         [("5", "۵ روز"), ("10", "۱۰ روز"), ("15", "۱۵ روز"), ("20", "۲۰ روز"),
                                          ("30", "۳۰ روز")])
-                from ..utils import clean_digits
-
                 days = int(clean_digits(v) or 0) or 10
                 due = today + dt.timedelta(days=min(days, 365))
             note_kind, note = await job.ask("توضیحی برای این یادآوری دارید؟ بنویسید یا «بدون توضیح» را بزنید.",
@@ -220,3 +221,125 @@ async def rem_add(cb: CallbackQuery, db):
             await job.say("ثبت یادآوری لغو شد.")
 
     start_job(cb, db, "reminder", coro)
+
+
+# ── ثبت یادآوری دلخواه (دستور کارفرما): کاربر خودش برای تاریخ‌هایی اعلام ──
+def reminder_dates_validator(v: str) -> tuple[list[dt.date] | None, str | None]:
+    """اعتبارسنجی «یک یا چند تاریخ شمسی از امروز به بعد» — جدا با ویرگول/خط جدید.
+
+    بخشی که دو تاریخ دارد (مثل «۱۴۰۵/۰۹/۱۰ و ۱۴۰۵/۰۹/۲۰») رد می‌شود تا یکی از
+    تاریخ‌ها بی‌اعلام نماند؛ تاریخ تکراری فقط یک‌بار شمرده می‌شود.
+    """
+    today = today_tehran()
+    parts = [p.strip() for p in re.split(r"[،,\n؛;]+", to_en_digits(v or "")) if p.strip()]
+    if not parts:
+        return None, T.BAD_DATE
+    if len(parts) > config.MAX_REMINDER_DATES_PER_MSG:
+        return None, T.R_REM_TOO_MANY_DATES.format(max=to_fa_digits(config.MAX_REMINDER_DATES_PER_MSG))
+    out: list[dt.date] = []
+    bad: list[str] = []
+    for p in parts:
+        d = parse_jalali(p)
+        if d is None or d < today or count_jalali_dates(p) != 1:
+            bad.append(p)
+        elif d not in out:
+            out.append(d)
+    if bad or not out:
+        return None, T.R_REM_BAD_DATES.format(list="، ".join(to_fa_digits(b) for b in bad) or "-")
+    return out, None
+
+
+@router.message(F.text == T.R_NEW_REMINDER)
+async def new_reminder(message: Message, db):
+    """«➕ ثبت یادآوری جدید» — فقط کاربرانی که حداقل یک اشتراک فعال دارند (دستور کارفرما)."""
+    if await _busy(message):
+        return
+    ok, why = await sub.has_active_subscription(db, message.from_user.id)
+    if not ok:
+        if why == "restricted":
+            s = await sub.get(db, message.from_user.id)
+            until = parse_iso(s.get("restricted_until"))
+            await message.answer(T.restricted_until_text(fa_date(until.date()) if until else "-"),
+                                 reply_markup=K.main_menu())
+        else:
+            await show_plans(message.bot, message.chat.id, T.REMINDERS_NEED_PLAN)
+        return
+
+    async def coro(job: Job):
+        async def ask_days() -> int:
+            """«چند روز دیگر؟» — دکمه‌های آماده یا عدد آزاد (۱ تا ۳۶۵)."""
+            while True:
+                kind, v = await job.ask(T.R_REM_ASK_DAYS,
+                                        [("5", "۵ روز"), ("10", "۱۰ روز"), ("15", "۱۵ روز"),
+                                         ("20", "۲۰ روز"), ("30", "۳۰ روز")])
+                days = int(v) if kind == "choice" else int(clean_digits(v) or 0)
+                if 1 <= days <= 365:
+                    return days
+                await job.say(T.R_REM_BAD_DAYS)
+
+        try:
+            mode = await job.ask_choice(T.R_REM_ASK_MODE, [("date", T.R_REM_MODE_DATE),
+                                                           ("days", T.R_REM_MODE_DAYS)])
+            today = today_tehran()
+            if mode == "date":
+                dates = await job.ask_text(T.R_REM_ASK_DATES, reminder_dates_validator)
+            else:
+                dates = [today + dt.timedelta(days=await ask_days())]
+            # سقف یادآوری بازِ دلخواه (ضد انباشت بی‌سقف)
+            open_rows = await db.all(
+                "SELECT id FROM reminders WHERE bale_id=? AND kind='custom' AND status='open'", (job.user_id,))
+            if len(open_rows) + len(dates) > config.MAX_CUSTOM_REMINDERS_OPEN:
+                await job.say(T.R_REM_CAP_FULL.format(max=to_fa_digits(config.MAX_CUSTOM_REMINDERS_OPEN)))
+                return
+            # شماره پرونده/بایگانی اختیاری
+            case_number = archive_number = None
+            while case_number is None and archive_number is None:
+                kind, v = await job.ask(T.R_REM_ASK_CASE, [("-", T.R_REM_NO_CASE)])
+                if kind == "choice":
+                    break
+                val, _ = validate_case_number(v)
+                if val:
+                    case_number = val
+                    break
+                val, _ = validate_archive_number(v)
+                if val:
+                    archive_number = val
+                    break
+                await job.say(T.R_REM_BAD_CASE)
+            # توضیح اختیاری
+            kind, note_v = await job.ask(T.R_REM_ASK_NOTE, [("-", T.R_REM_NO_NOTE)])
+            note = None if kind == "choice" else note_v.strip()[:300]
+            # تأیید نهایی
+            lines = [T.R_REM_CONFIRM]
+            for i, d in enumerate(dates, 1):
+                lines.append(f"{to_fa_digits(i)}. {weekday_fa(d)} {fa_date(d)}")
+            if case_number:
+                lines.append(f"پرونده: {to_fa_digits(case_number)}")
+            if archive_number:
+                lines.append(f"شماره بایگانی: {to_fa_digits(archive_number)}")
+            if note:
+                lines.append(f"📝 {note}")
+            while True:
+                c = await job.ask_choice("\n".join(lines),
+                                         [("ok", T.R_REM_CONFIRM_OK), ("edit", T.R_REM_CONFIRM_EDIT)])
+                if c == "ok":
+                    break
+                if mode == "date":
+                    dates = await job.ask_text(T.R_REM_ASK_DATES, reminder_dates_validator)
+                else:
+                    dates = [today + dt.timedelta(days=await ask_days())]
+                lines = [T.R_REM_CONFIRM]
+                for i, d in enumerate(dates, 1):
+                    lines.append(f"{to_fa_digits(i)}. {weekday_fa(d)} {fa_date(d)}")
+            # ویرایش می‌تواند تعداد تاریخ‌ها را زیاد کند ← سقف دوباره چک می‌شود
+            if len(open_rows) + len(dates) > config.MAX_CUSTOM_REMINDERS_OPEN:
+                await job.say(T.R_REM_CAP_FULL.format(max=to_fa_digits(config.MAX_CUSTOM_REMINDERS_OPEN)))
+                return
+            for d in dates:
+                await db.add_reminder(job.user_id, "custom", d, note=note, case_number=case_number,
+                                      archive_number=archive_number, start_date=today)
+            await job.say(T.R_REM_DONE.format(n=to_fa_digits(len(dates))))
+        except (JobCancelled, UserTimeout):
+            await job.say(T.R_REM_CANCELLED)
+
+    start_job(message, db, "reminder_new", coro)

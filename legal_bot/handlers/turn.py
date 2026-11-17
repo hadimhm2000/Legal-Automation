@@ -43,6 +43,54 @@ def _multi_numbers_validator(by: str):
     return validate
 
 
+def _exact_count_validator(by: str, count: int):
+    """اعتبارسنجی ویرایش شماره‌های فاکتورِ استفاده‌نشده: دقیقاً همان تعداد نوبتِ
+    پرداخت‌شده (تک ← ۱ شماره؛ چند ← همه‌ی شماره‌ها) — دستور کارفرما."""
+
+    def validate(v: str):
+        parts = [p.strip() for p in re.split(r"[،,\n;]+", to_en_digits(v or "")) if p.strip()]
+        if len(parts) != count:
+            return None, T.TURN_RETRY_COUNT_MISMATCH.format(n=to_fa_digits(count))
+        validator = validate_case_number if by == "case" else validate_archive_number
+        out = []
+        for p in parts:
+            val, err = validator(p)
+            if err:
+                return None, "این شماره معتبر نیست: " + to_fa_digits(p)
+            if val not in out:
+                out.append(val)
+        if len(out) != count:
+            return None, "شماره‌های تکراری قابل ثبت نیستند؛ شماره‌های متفاوت بفرستید."
+        return out, None
+
+    return validate
+
+
+async def _ask_numbers_again(job: Job, by: str, numbers: list[str]) -> list[str]:
+    """درخواستِ (پرداخت‌شده‌ی) استفاده‌نشده: قبل از شروع، امکان ویرایش شماره پرونده
+    (دستور کارفرما) — کاربر شماره‌ی اشتباه را اصلاح می‌کند و بعد از تأیید، مراحل
+    شروع می‌شود."""
+    kind = T.TURN_RETRY_KIND_CASE if by == "case" else T.TURN_RETRY_KIND_ARCHIVE
+    plural = "های" if len(numbers) > 1 else ""
+    shown = "، ".join(to_fa_digits(n) for n in numbers)
+    act = await job.ask_choice(T.TURN_RETRY_ASK.format(plural=plural, nums=shown),
+                               [("keep", T.TURN_RETRY_KEEP), ("edit", T.TURN_RETRY_EDIT)])
+    if act == "keep":
+        return numbers
+    while True:
+        if len(numbers) > 1:
+            new = await job.ask_text(T.TURN_RETRY_EDIT_ASK_MULTI.format(
+                n=to_fa_digits(len(numbers)), kind=kind), _exact_count_validator(by, len(numbers)))
+        else:
+            new = [await job.ask_text(T.TURN_RETRY_EDIT_ASK.format(kind=kind),
+                                      validate_case_number if by == "case" else validate_archive_number)]
+        c = await job.ask_choice(
+            T.TURN_RETRY_CONFIRM.format(plural=plural, nums="، ".join(to_fa_digits(n) for n in new)),
+            [("ok", T.TURN_RETRY_CONFIRM_OK), ("edit", T.TURN_RETRY_CONFIRM_EDIT)])
+        if c == "ok":
+            return new
+
+
 @router.message(F.text == T.M_TURN)
 async def menu(message: Message, db):
     if jobs.busy(message.from_user.id):
@@ -53,7 +101,8 @@ async def menu(message: Message, db):
         nums = (inv["payload"] or "case:").split(":", 1)[1]
         n = len([x for x in nums.split(",") if x.strip()])
         await message.answer(f"یک درخواست پرداخت‌شده‌ی استفاده‌نشده دارید "
-                             f"({to_fa_digits(n)} نوبت: {to_fa_digits(nums)}).",
+                             f"({to_fa_digits(n)} نوبت: {to_fa_digits(nums)}).\n"
+                             "در صورت اشتباه بودن شماره، بعد از زدن «شروع» می‌توانید آن را ویرایش کنید.",
                              reply_markup=K.inline([[("▶️ شروع ثبت نوبت با همین پرداخت", f"turn:go:{inv['code']}")],
                                                     [("➕ درخواست جدید", "turn:new")]]))
         return
@@ -109,6 +158,17 @@ async def go(cb: CallbackQuery, db):
     numbers = [n.strip() for n in nums.split(",") if n.strip()]
 
     async def coro(job: Job):
+        # دستور کارفرما: وقتی درخواستِ (پرداخت‌شده‌ی) استفاده‌نشده برای همان
+        # پرونده را انتخاب می‌کند، امکان ویرایش شماره پرونده هست (شماره‌ی قبلی
+        # اشتباه بوده) و بعد از تأیید، مراحل شروع می‌شود.
+        try:
+            numbers_final = await _ask_numbers_again(job, by, numbers)
+        except (JobCancelled, UserTimeout):
+            await job.say(T.CANCELLED)
+            return
+        if numbers_final != numbers:
+            await db.execute("UPDATE invoices SET payload=? WHERE code=?",
+                             (f"{by}:{','.join(numbers_final)}", code))
         ctx = RunCtx(job, db, "turn")
 
         async def on_booked(_number: str):
@@ -117,7 +177,7 @@ async def go(cb: CallbackQuery, db):
             await db.execute("UPDATE invoices SET status='used' WHERE code=? AND status='approved'", (code,))
 
         async def w(ctx, br, login, page):
-            await turn.work_turn(ctx, br, login, page, numbers, by, on_booked=on_booked)
+            await turn.work_turn(ctx, br, login, page, numbers_final, by, on_booked=on_booked)
 
         await run_with_browser(ctx, "turn", w)
         r = await db.one("SELECT status FROM invoices WHERE code=?", (code,))

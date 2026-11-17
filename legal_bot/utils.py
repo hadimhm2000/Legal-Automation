@@ -116,6 +116,12 @@ def parse_jalali(s: str) -> dt.date | None:
         return None
 
 
+def count_jalali_dates(s: str) -> int:
+    """تعداد تاریخ‌های شمسی موجود در یک متن (برای اعتبارسنجی ورودی چندتایی:
+    بخشی که دو تاریخ دارد — مثل «۱۴۰۵/۰۹/۱۰ و ۱۴۰۵/۰۹/۲۰» — رد می‌شود)."""
+    return len(_JDATE_RE.findall(to_en_digits(s or "")))
+
+
 def to_jalali_str(d: dt.date | None, sep: str = "/") -> str:
     if not d:
         return "-"

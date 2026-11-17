@@ -23,6 +23,43 @@ def test_custom_five_days_and_day_before():
     assert hits == [16, 20, 21]
 
 
+def test_reminder_dates_validator():
+    """اعتبارسنجی تاریخ‌های یادآوری دلخواه (دستور کارفرما): چند تاریخ با ویرگول/خط،
+    تاریخ چسبیده («و») و تاریخ گذشته رد می‌شوند؛ تکراری یک‌بار شمرده می‌شود."""
+    from legal_bot.handlers.notices import reminder_dates_validator
+    from legal_bot.utils import today_tehran, to_jalali_str, parse_jalali
+
+    d1 = today_tehran() + dt.timedelta(days=40)
+    d2 = today_tehran() + dt.timedelta(days=80)
+    # دو تاریخ جدا (ویرگول و خط جدید) — هر دو معتبر
+    out, err = reminder_dates_validator(f"{to_jalali_str(d1)}، {to_jalali_str(d2)}")
+    assert err is None and out == [d1, d2]
+    # جداکننده‌های فارسی/متن ترکیبی
+    out, err = reminder_dates_validator(f"{to_jalali_str(d1)}\n{to_jalali_str(d2)}")
+    assert err is None and out == [d1, d2]
+    # تاریخ چسبیده با «و» ← رد (یکی از تاریخ‌ها بی‌اعلام نماند)
+    out, err = reminder_dates_validator(f"{to_jalali_str(d1)} و {to_jalali_str(d2)}")
+    assert out is None and "معتبر نیست" in err
+    # تاریخ گذشته ← رد
+    out, err = reminder_dates_validator(to_jalali_str(today_tehran() - dt.timedelta(days=3)))
+    assert out is None
+    # امروز مجاز است
+    out, err = reminder_dates_validator(to_jalali_str(today_tehran()))
+    assert err is None and out == [today_tehran()]
+    # تکراری ← یک‌بار
+    out, err = reminder_dates_validator(f"{to_jalali_str(d1)}، {to_jalali_str(d1)}")
+    assert err is None and out == [d1]
+    # بیش از سقف هر پیام ← رد
+    from legal_bot import config
+    many = "، ".join(to_jalali_str(today_tehran() + dt.timedelta(days=i))
+                     for i in range(1, config.MAX_REMINDER_DATES_PER_MSG + 2))
+    out, err = reminder_dates_validator(many)
+    assert out is None and "حداکثر" in err
+    # تاریخ نامعتبر
+    out, err = reminder_dates_validator("جلسه دادگاه")
+    assert out is None
+
+
 class FakeBot:
     def __init__(self):
         self.sent = []

@@ -232,6 +232,14 @@ def _is_capacity_error(txt: str) -> bool:
     return all(w in t for w in S.CAPACITY_ERROR_WORDS)
 
 
+def _is_case_not_found_error(txt: str) -> bool:
+    """sweet-alert «هیچ پرونده ای با شماره «...» یافت نشد .» (HTML ارسالی کارفرما —
+    h2 داخل sweet-alert) یا «موردی یافت نشد»: بعد از استعلامِ «بازیابی پرونده» یعنی
+    اسم کاربر در پرونده نیست یا شماره پرونده اشتباه است (دستور کارفرما)."""
+    t = normalize_fa(txt or "")
+    return S.TURN_NOT_FOUND_NEEDLE in t and any(w in t for w in S.TURN_NOT_FOUND_WORDS)
+
+
 class Turn:
     def __init__(self, ctx, br, login, page: Page):
         self.ctx, self.br, self.login, self.page = ctx, br, login, page
@@ -334,6 +342,17 @@ class Turn:
                     return line.strip()[:300]
         return ""
 
+    async def _case_not_found_alert(self) -> str:
+        """پیام «هیچ پرونده ای با شماره «...» یافت نشد» بعد از استعلامِ «بازیابی
+        پرونده» (دستور کارفرما): sweet-alert (h2/p) یا متن ساده‌ی صفحه."""
+        txt = await self._alert_text()
+        if txt and _is_case_not_found_error(txt):
+            return txt[:300]
+        for line in (await page_text(self.page)).splitlines():
+            if _is_case_not_found_error(line):
+                return line.strip()[:300]
+        return ""
+
     @staticmethod
     def _parse_active_range(txt: str) -> tuple[dt.date | None, dt.date | None]:
         """«روزهای 1405/08/26 لغایت 1405/09/05» ← (شروعِ بازه، پایانِ بازه)."""
@@ -421,8 +440,14 @@ class Turn:
             nums = {number, (number or "").lstrip("0")} - {""}
             rows = await self.page.evaluate(ROWS_JS, sorted(nums))
             if not rows:
-                # شاید sweet-alertِ «یافت نشد» باز باشد؛ بسته می‌شود تا پیام خطا بیاید
+                # دستور کارفرما: sweet-alert «هیچ پرونده ای با شماره «...» یافت نشد»
+                # بعد از استعلام ← روند متوقف شود: اسم کاربر در پرونده نیست یا
+                # شماره پرونده اشتباه است (ادامه‌ی خودکار با شماره‌ی غلط ممنوع).
+                nf = await self._case_not_found_alert()
                 await self._close_alert()
+                if nf:
+                    raise FlowError("TURN_CASE_NOT_FOUND", f"turn: case not found: {nf[:150]}",
+                                    T.TURN_CASE_NOT_FOUND)
         if rows:
             if by == "case":
                 ex = [r for r in rows if is_execution_branch(r["text"])]
@@ -453,8 +478,11 @@ class Turn:
             await el.click()
             await el.fill(number)
         else:
-            raise FlowError("CASE_NOT_FOUND", "case not in my-cases",
-                            f"⚠️ پرونده‌ی {to_fa_digits(number)} در «فهرست پرونده‌های من» این حساب پیدا نشد.")
+            # هیچ نتیجه‌ای از استعلام نیامد (نه ردیف، نه هشدار) — همان پیام
+            # «اسم شما در پرونده نیست...» (دستور کارفرما)
+            raise FlowError("TURN_CASE_NOT_FOUND", "case not in my-cases",
+                            T.TURN_CASE_NOT_FOUND
+                            + f"\n(شماره/بایگانی ارسالی: {to_fa_digits(number)})")
         if not await visible(self.page.locator(S.TURN_CHECK), timeout=8000):
             raise FlowError("PARSE_CHANGED", "turn: check button not found")
         await self.page.locator(S.TURN_CHECK).first.click()
