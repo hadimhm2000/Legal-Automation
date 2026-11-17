@@ -38,6 +38,15 @@ LEGAL_BOT_TOKEN = os.environ.get("LEGAL_BOT_TOKEN", "")
 BALE_API_BASE = os.environ.get("BALE_API_BASE", "https://tapi.bale.ai")
 ADMIN_ID = _int("ADMIN_ID", 0)
 BETA_IDS = _ids("BETA_IDS") | ({ADMIN_ID} if ADMIN_ID else set())
+
+
+def _open_to_all(name):
+    """BETA_IDS=* (یا all) یعنی ربات برای همهٔ کاربران باز است — بدون نیاز به فهرست آیدی."""
+    raw = os.environ.get(name, "") or ""
+    return any(p.strip().lower() in ("*", "all") for p in raw.replace("،", ",").split(","))
+
+
+BETA_OPEN_TO_ALL = _open_to_all("BETA_IDS")
 HANDOFF_SECRET = os.environ.get("HANDOFF_SECRET", "")
 HANDOFF_TTL_SEC = _int("HANDOFF_TTL_SEC", 300)
 # اگر 0 باشد، /start بدون توکن هم برای اعضای بتا پذیرفته می‌شود (برای تست)

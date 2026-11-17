@@ -284,6 +284,8 @@ class DB:
         return await self.one("SELECT * FROM users WHERE bale_id=?", (bale_id,))
 
     async def is_beta(self, bale_id) -> bool:
+        if config.BETA_OPEN_TO_ALL:   # BETA_IDS=* → همهٔ کاربران
+            return True
         if bale_id in config.BETA_IDS:
             return True
         return bool(await self.one("SELECT 1 FROM beta_allow WHERE bale_id=?", (bale_id,)))
