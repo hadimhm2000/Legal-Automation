@@ -136,8 +136,16 @@ async def _new(m, db):
             return
         # چند نوبت = قیمت هر نوبت × تعداد (فاکتور کارت‌به‌کارت)
         inv = await sub.create_invoice(db, job.user_id, "turn", payload=f"{by}:{','.join(numbers)}",
-                                       amount=config.PRICE_TURN * len(numbers),
+                                       amount=0 if job.user_id in config.FREE_TURN_IDS else config.PRICE_TURN * len(numbers),
                                        is_admin=job.user_id == config.ADMIN_ID)
+        if job.user_id in config.FREE_TURN_IDS:
+            # ?????? ?? ??????? ???? (FREE_TURN_IDS): ???? ?????? ????? ??????
+            await db.execute("UPDATE invoices SET status='approved', reviewed_by=?, reviewed_at=? WHERE code=?",
+                             (job.user_id, sub.now_iso(), inv["code"]))
+            await job.bot.send_message(
+                job.chat_id, "? ??? ???? ???? ??? ?????? ???. ???? ????? ?????? ??? ?? ?????.",
+                reply_markup=K.inline([[("?? ???? ??? ????", f"turn:go:{inv['code']}")]]))
+            return
         await show_invoice(job.bot, job.chat_id, inv)
 
     start_job(m, db, "turn_prepare", coro)
