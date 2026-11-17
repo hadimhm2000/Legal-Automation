@@ -54,6 +54,8 @@ class FakeSession(BaseSession):
 async def env(db, monkeypatch):
     monkeypatch.setattr(config, "ADMIN_ID", ADMIN)
     monkeypatch.setattr(config, "BETA_IDS", {ADMIN})
+    monkeypatch.setattr(config, "BETA_OPEN_TO_ALL", False)   # ????? ?? BETA_IDS=* ?? .env
+    monkeypatch.setattr(config, "ADMIN_FREE", False)          # ????? ??? ?????? ??????? ?????
     monkeypatch.setattr(config, "HANDOFF_SECRET", "hs")
     import bot_main
 

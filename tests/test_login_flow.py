@@ -219,8 +219,8 @@ async def test_full_login_with_wrong_password_captcha_and_wrong_otp():
     assert bot.photos == 1                       # فقط تصویر کپچا
     assert steps[:4] == ["L04", "L05", "L06", "L07"]
     # پیام پرسش اول: «ارسال شد؛ وارد کنید» + توصیه‌ی ۳۰ دقیقه
-    otp_prompt = next(t for t in bot.texts if t and "رمز موقت برای شما پیامک شد" in t)
-    assert "۳۰ دقیقه" in otp_prompt
+    otp_prompt = next(t for t in bot.texts if t and T.ASK_OTP[:16] in t)
+    assert "ارسال رمز موقت" in otp_prompt
     # پرسش اول دکمه‌ی «ارسال رمز موقت» دارد (پیامِ خودکار نبود — دستور کارفرما)
     first_opts = next(o for p, o in log if p == otp_prompt)
     assert "resend" in first_opts
