@@ -189,12 +189,19 @@ async def _process_receipt(message: Message, db, inv) -> None:
             "⚠️ این تصویر رسید قبلاً برای فاکتور "
             f"{dup['code']} ارسال شده است. لطفاً رسید همین پرداخت را بفرستید.")
         return
+    # انتقال وضعیت اتمیک: دو رسید هم‌زمان (یا رسید هم‌زمان با تایید مدیر) فاکتور را خراب نمی‌کند
     if is_shortfall:
-        await db.execute("UPDATE invoices SET status='receipt_sent', shortfall_receipt_file_id=?, "
-                         "shortfall_receipt_file_unique_id=? WHERE code=?", (file_id, uniq, inv["code"]))
+        cur = await db.execute("UPDATE invoices SET status='receipt_sent', shortfall_receipt_file_id=?, "
+                               "shortfall_receipt_file_unique_id=? WHERE code=? AND status='shortfall_wait'",
+                               (file_id, uniq, inv["code"]))
     else:
-        await db.execute("UPDATE invoices SET status='receipt_sent', receipt_file_id=?, "
-                         "receipt_file_unique_id=? WHERE code=?", (file_id, uniq, inv["code"]))
+        cur = await db.execute("UPDATE invoices SET status='receipt_sent', receipt_file_id=?, "
+                               "receipt_file_unique_id=? WHERE code=? AND status='pending'",
+                               (file_id, uniq, inv["code"]))
+    if cur.rowcount != 1:
+        armed_receipt.pop(uid, None)
+        await message.answer("این فاکتور دیگر در وضعیت دریافت رسید نیست.")
+        return
     armed_receipt.pop(uid, None)
     await message.answer(
         ("✅ رسید باقی‌مانده‌ی مبلغ دریافت شد و برای بررسی به پشتیبانی ارسال گردید.\n"
@@ -260,9 +267,9 @@ async def admin_ok(cb: CallbackQuery, db):
         await safe_answer(cb, "فقط مدیر", alert=True)
         return
     code = cb.data.split(":")[2]
-    inv = await sub.approve_invoice(db, code, cb.from_user.id)
+    inv = await sub.approve_invoice(db, code, cb.from_user.id, only_receipt=True)
     if not inv:
-        await safe_answer(cb, "قبلاً بررسی شده است.", alert=True)
+        await safe_answer(cb, "قبلاً بررسی شده است یا رسیدی در انتظار تایید نیست.", alert=True)
         return
     await safe_answer(cb, "تایید شد")
     try:
@@ -273,6 +280,17 @@ async def admin_ok(cb: CallbackQuery, db):
     except Exception:
         pass
     user = await db.get_user(inv["bale_id"])
+    if not user or not user.get("chat_id"):
+        await cb.message.answer("⚠️ فاکتور تایید شد، اما کاربر chat_id ندارد؛ خودتان به او اطلاع دهید.")
+        return
+    try:
+        await _notify_approved(cb, db, inv, user, code)
+    except Exception as e:      # کاربر ربات را بلاک کرده/خطای شبکه: تایید انجام شده، فقط اطلاع‌رسانی نرسید
+        log.warning("approve notify failed: %s", type(e).__name__)
+        await cb.message.answer("⚠️ فاکتور تایید شد، اما ارسال پیام به کاربر ناموفق بود.")
+
+
+async def _notify_approved(cb, db, inv, user, code):
     if inv["kind"] == "turn":
         await cb.bot.send_message(user["chat_id"], "✅ پرداخت شما تایید شد. برای شروع ثبت نوبت دکمه‌ی زیر را بزنید.",
                                   reply_markup=K.inline([[("▶️ شروع ثبت نوبت", f"turn:go:{code}")]]))
@@ -341,15 +359,20 @@ async def _reject(bot, target, db, code, reason):
         await target.answer("این فاکتور در وضعیت قابل رد نیست.")
         return
     user = await db.get_user(inv["bale_id"])
-    await bot.send_message(
-        user["chat_id"],
-        f"❌ رسید فاکتور {code} تایید نشد.\nدلیل: {reason}\n"
-        "در صورت پرداخت صحیح، رسید درست را دوباره ارسال کنید.",
-        reply_markup=_offer_kb(code))
+    try:
+        await bot.send_message(
+            user["chat_id"],
+            f"❌ رسید فاکتور {code} تایید نشد.\nدلیل: {reason}\n"
+            "در صورت پرداخت صحیح، رسید درست را دوباره ارسال کنید.",
+            reply_markup=_offer_kb(code))
+    except Exception as e:
+        log.warning("reject notify failed: %s", type(e).__name__)
+        await target.answer("⚠️ رد ثبت شد، اما ارسال پیام به کاربر ناموفق بود.")
+        return
     await target.answer("✅ رد شد و به کاربر اطلاع داده شد.")
 
 
-@router.message(F.text, F.from_user.id.func(lambda uid: uid in awaiting_reason))
+@router.message(F.text, ~F.text.startswith("/"), F.from_user.id.func(lambda uid: uid in awaiting_reason))
 async def admin_reason_text(message: Message, db):
     code = awaiting_reason.pop(message.from_user.id)
     await _reject(message.bot, message, db, code, message.text[:300])
@@ -372,7 +395,7 @@ async def admin_shortfall(cb: CallbackQuery, db):
                             f"فاکتور {code}:")
 
 
-@router.message(F.text, F.from_user.id.func(lambda uid: uid in awaiting_shortfall))
+@router.message(F.text, ~F.text.startswith("/"), F.from_user.id.func(lambda uid: uid in awaiting_shortfall))
 async def admin_shortfall_amount(message: Message, db):
     from ..utils import clean_digits
 

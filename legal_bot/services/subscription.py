@@ -224,10 +224,10 @@ async def case_cap(db: DB, uid: int) -> int:
 
 # ── سهمیه استعلام ───────────────────────────────────────────────────────────
 async def can_inquiry(db: DB, uid: int, bot=None) -> tuple[bool, str | None]:
+    """بررسی پیش از شروع استعلام دستی. خروجی: (مجاز؟، علت عدم مجاز)."""
     if _is_admin_free(uid):
         await get(db, uid)
         return True, None
-    """بررسی پیش از شروع استعلام دستی. خروجی: (مجاز؟، علت عدم مجاز)."""
     s = await get(db, uid)
     if s["status"] not in ACTIVE:
         return False, "inactive"
@@ -261,16 +261,21 @@ async def can_inquiry(db: DB, uid: int, bot=None) -> tuple[bool, str | None]:
 
 
 async def consume(db: DB, uid: int) -> str | None:
+    """بعد از استعلام موفق: یک واحد از سهمیه کم می‌شود (قاعده ۱). خروجی: متن گزارش باقی‌مانده."""
     if _is_admin_free(uid):
         return None
-    """بعد از استعلام موفق: یک واحد از سهمیه کم می‌شود (قاعده ۱). خروجی: متن گزارش باقی‌مانده."""
     s = await get(db, uid)
     if s["status"] not in ACTIVE:
         return None
     m = plan_meta(s["plan"])
     if (s["inquiries_left"] or 0) > 0:
-        left = s["inquiries_left"] - 1
-        await _set(db, uid, inquiries_left=left)
+        # کسر اتمیک: دو استعلام هم‌زمان نباید یک واحد را دوبار «ببینند»/منفی شوند
+        cur = await db.execute("UPDATE subscriptions SET inquiries_left=inquiries_left-1, updated_at=? "
+                               "WHERE bale_id=? AND inquiries_left>0", (now_iso(), uid))
+        row = await db.one("SELECT inquiries_left FROM subscriptions WHERE bale_id=?", (uid,))
+        left = max(0, (row or {}).get("inquiries_left") or 0)
+        if cur.rowcount != 1:
+            return None
         await db.add_plan_event(uid, "inquiry_used", s["plan"], f"اعتبار باقی‌مانده: {left}")
         return f"📊 یک استعلام از اعتبار شما کم شد؛ باقی‌مانده: {to_fa_digits(left)}"
     if s["plan"] in SUB_PLANS:
@@ -278,8 +283,10 @@ async def consume(db: DB, uid: int) -> str | None:
             done_today = await db.manual_done_since(uid, 24, INQUIRY_KINDS)
             return (f"📊 استعلام‌های دستی امروز: {to_fa_digits(done_today)} از "
                     f"{to_fa_digits(config.PLAN_ORG_DAILY_CAP)}")
-        used = (s["quota_used"] or 0) + 1
-        await _set(db, uid, quota_used=used)
+        await db.execute("UPDATE subscriptions SET quota_used=COALESCE(quota_used,0)+1, updated_at=? "
+                         "WHERE bale_id=?", (now_iso(), uid))
+        row = await db.one("SELECT quota_used FROM subscriptions WHERE bale_id=?", (uid,))
+        used = (row or {}).get("quota_used") or ((s["quota_used"] or 0) + 1)
         await db.add_plan_event(uid, "inquiry_used", s["plan"], f"مصرف ماه: {used}/{s['quota_total']}")
         left = s["quota_total"] - used
         return f"📊 استعلام این ماه: {to_fa_digits(used)} از {to_fa_digits(s['quota_total'])} " \
@@ -288,9 +295,9 @@ async def consume(db: DB, uid: int) -> str | None:
 
 
 async def after_inquiry(db: DB, uid: int, bot=None) -> str | None:
+    """پس از هر استعلام دستی موفق: کسر سهمیه + بررسی مصرف غیرعادی (قاعده ۶)."""
     if _is_admin_free(uid):
         return None
-    """پس از هر استعلام دستی موفق: کسر سهمیه + بررسی مصرف غیرعادی (قاعده ۶)."""
     note = await consume(db, uid)
     recent = await db.manual_done_since(uid, 1, INQUIRY_KINDS)
     if recent > config.ABUSE_MANUAL_PER_HOUR:
@@ -305,7 +312,8 @@ async def after_inquiry(db: DB, uid: int, bot=None) -> str | None:
 
 # ── محدودیت و گزارش تخلف (قاعده ۶) ──────────────────────────────────────────
 async def restrict(db: DB, uid: int, hours: int, reason: str):
-    until = (utcnow() + dt.timedelta(hours=max(1, hours))).isoformat()
+    hours = max(1, min(int(hours), 24 * 365))      # سقف: جلوگیری از OverflowError در timedelta
+    until = (utcnow() + dt.timedelta(hours=hours)).isoformat()
     await _set(db, uid, restricted_until=until, restriction_reason=reason[:300])
     await db.add_plan_event(uid, "restricted", None, reason[:300])
 
@@ -364,11 +372,15 @@ async def free_used(db: DB, uid: int) -> bool:
 
 
 async def activate_free(db: DB, uid: int, bot=None) -> bool:
-    if await free_used(db, uid):
+    # اتمیک + فقط برای حساب بدون اشتراک فعال: دابل‌کلیک/درخواست هم‌زمان دو بار اعتبار نمی‌دهد
+    # و اشتراک پولیِ فعال با «شروع رایگان» بازنویسی نمی‌شود.
+    cur = await db.execute(
+        "UPDATE subscriptions SET status='FREE_ACTIVE', plan='free', cycle=NULL, inquiries_left=?, "
+        "free_used=1, quota_total=0, quota_used=0, locked_at=NULL, updated_at=? "
+        "WHERE bale_id=? AND COALESCE(free_used,0)=0 AND status NOT IN ('FREE_ACTIVE','PAID_ACTIVE')",
+        (config.FREE_INQUIRIES, now_iso(), uid))
+    if cur.rowcount != 1:
         return False
-    await _set(db, uid, status="FREE_ACTIVE", plan="free", cycle=None,
-               inquiries_left=config.FREE_INQUIRIES, free_used=1,
-               quota_total=0, quota_used=0, locked_at=None)
     await db.add_plan_event(uid, "free_start", "free",
                             f"{config.FREE_INQUIRIES} استعلام رایگان برای هر دو بخش")
     return True
@@ -403,14 +415,20 @@ async def create_invoice(db: DB, uid: int, kind: str, plan: str | None = None, c
     return await db.one("SELECT * FROM invoices WHERE code=?", (code,))
 
 
-async def approve_invoice(db: DB, code: str, admin_id: int) -> dict | None:
-    """idempotent: تأیید دوباره بی‌اثر است. خروجی: فاکتور (فقط اگر همین الان تأیید شد)."""
+async def approve_invoice(db: DB, code: str, admin_id: int, *, only_receipt: bool = False) -> dict | None:
+    """idempotent: تأیید دوباره بی‌اثر است. خروجی: فاکتور (فقط اگر همین الان تأیید شد).
+
+    only_receipt=True (دکمه‌ی ✅ زیر رسید در بله): فقط فاکتورِ دارای رسید تأیید می‌شود؛ وگرنه
+    دکمه‌ی قدیمیِ یک رسیدِ ردشده می‌توانست فاکتور را بدون رسید تأیید کند.
+    """
+    allowed = ("receipt_sent",) if only_receipt else ("receipt_sent", "pending", "shortfall_wait")
     inv = await db.one("SELECT * FROM invoices WHERE code=?", (code,))
-    if not inv or inv["status"] not in ("receipt_sent", "pending", "shortfall_wait"):
+    if not inv or inv["status"] not in allowed:
         return None
+    qs = ",".join("?" for _ in allowed)
     cur = await db.execute("UPDATE invoices SET status='approved', reviewed_by=?, reviewed_at=? "
-                           "WHERE code=? AND status IN ('receipt_sent','pending','shortfall_wait')",
-                           (admin_id, now_iso(), code))
+                           f"WHERE code=? AND status IN ({qs})",
+                           (admin_id, now_iso(), code, *allowed))
     if cur.rowcount != 1:
         return None
     if inv["kind"] == "turn":

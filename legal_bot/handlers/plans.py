@@ -54,6 +54,10 @@ async def choose_plan(cb: CallbackQuery, db):
     s = await sub.get(db, uid)
 
     if p == "free":
+        if s["status"] in sub.ACTIVE:
+            await cb.message.answer("🎁 شروع رایگان فقط برای حساب‌هایی است که اشتراک فعال ندارند.",
+                                    reply_markup=K.plans_kb())
+            return
         if await sub.free_used(db, uid):
             await cb.message.answer("🎁 شروع رایگان قبلاً برای این حساب فعال شده است "
                                     "(قاعده ۵: هر اشتراک فقط برای یک حساب کاربری است).",
@@ -129,6 +133,9 @@ async def _upgrade_view(target, db, uid: int, cur: str, new: str):
 async def rules_accepted(cb: CallbackQuery, db):
     await safe_answer(cb, "✅")
     then = cb.data.split(":", 2)[2]
+    if not _valid_then(then):
+        await show_plans(cb.bot, cb.message.chat.id)
+        return
     await db.execute("UPDATE subscriptions SET rules_ack_at=?, rules_version=1 WHERE bale_id=?",
                      (now_iso(), cb.from_user.id))
     if then == "free:go":
@@ -152,6 +159,18 @@ async def rules_accepted(cb: CallbackQuery, db):
     await _do_invoice(cb, db, then)
 
 
+def _valid_then(then: str) -> bool:
+    """مقصد پس از تایید قوانین: فقط الگوهای ساخته‌شده توسط خود ربات."""
+    if then == "free:go":
+        return True
+    parts = then.split(":")
+    if parts[0] == "bill":
+        return len(parts) == 2 and parts[1] in sub.SUB_PLANS
+    if parts[0] == "inv":
+        return len(parts) == 4
+    return False
+
+
 async def _do_invoice(cb, db, data: str):
     parts = data.split(":")           # inv, kind, plan, cycle
     if len(parts) != 4:
@@ -160,9 +179,33 @@ async def _do_invoice(cb, db, data: str):
     _, kind, plan, cycle = parts
     if kind == "renew":
         kind = "renewal"
-    if plan not in sub.PLANS or (cycle not in ("monthly", "quarterly", "credit")):
+    # اعتبارسنجی سخت: داده‌ی دکمه هرگز بدون بررسی به قیمت/فاکتور تبدیل نمی‌شود
+    # (مثلاً upgrade بدون اشتراک ← مبلغ ۰، یا پلن «free» ← KeyError).
+    meta = sub.plan_meta(plan)
+    kind_ok = kind in ("new", "upgrade", "renewal")
+    if not kind_ok or plan == "free" or not meta:
         await show_plans(cb.bot, cb.message.chat.id)
         return
+    if meta.get("kind") == "credit":
+        if cycle != "credit" or kind != "new":
+            await show_plans(cb.bot, cb.message.chat.id)
+            return
+    else:
+        if cycle not in ("monthly", "quarterly"):
+            await show_plans(cb.bot, cb.message.chat.id)
+            return
+        s = await sub.get(db, cb.from_user.id)
+        active_sub = bool(s["status"] == "PAID_ACTIVE" and s["plan"] in sub.SUB_PLANS and s["paid_until"]
+                          and parse_iso(s["paid_until"]) > sub.utcnow())
+        if kind == "new" and active_sub:
+            await show_plans(cb.bot, cb.message.chat.id, "اشتراک فعال دارید؛ از «💳 اشتراک من» تمدید یا ارتقا دهید.")
+            return
+        if kind == "renewal" and not (active_sub and s["plan"] == plan):
+            await show_plans(cb.bot, cb.message.chat.id)
+            return
+        if kind == "upgrade" and not (active_sub and _PLAN_RANK.get(plan, 0) > _PLAN_RANK.get(s["plan"], 0)):
+            await show_plans(cb.bot, cb.message.chat.id)
+            return
     inv = await sub.create_invoice(db, cb.from_user.id, kind, plan, cycle,
                                    is_admin=cb.from_user.id == config.ADMIN_ID)
     await show_invoice(cb.bot, cb.message.chat.id, inv)
@@ -207,6 +250,10 @@ async def phone_contact(message: Message, db):
     if not _phone_waiting(message.from_user.id):
         await message.answer("برای تأیید شماره موبایل، ابتدا از «💳 اشتراک من» یا پلن‌ها "
                              "«🎁 شروع رایگان» را انتخاب کنید.", reply_markup=K.main_menu())
+        return
+    # مخاطبِ فورواردشده/متعلق به شخص دیگر پذیرفته نمی‌شود (دور زدن قاعده ۵)
+    if message.contact.user_id and message.contact.user_id != message.from_user.id:
+        await message.answer("لطفاً فقط شماره‌ی خودِ همین حساب را با دکمه‌ی «اشتراک شماره» بفرستید.")
         return
     phone = sub.normalize_phone(message.contact.phone_number or "")
     if not phone:

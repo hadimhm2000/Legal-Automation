@@ -24,6 +24,8 @@ class JobWaitsText(Filter):
 @router.message(F.text, JobWaitsText())
 async def deliver(message: Message):
     job = jobs.get(message.from_user.id)
+    if job is None:        # بین فیلتر و هندلر کار تمام/لغو شده است
+        return
     secret = job.waiting_secret()
     text = message.text
     if secret:
@@ -32,7 +34,6 @@ async def deliver(message: Message):
         except Exception:
             await message.answer(T.DELETE_FAILED)
     job.deliver_text(text)
-    text = None
 
 
 @router.callback_query(F.data.regexp(r"^j:[0-9a-f]+:\d+:\d+$"))

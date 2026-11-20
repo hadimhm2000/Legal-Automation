@@ -60,7 +60,7 @@ async def restrict_cmd(message: Message, command: CommandObject, db):
     if len(args) < 2 or not args[0].isdigit() or not args[1].isdigit():
         await message.answer("/legal_restrict <id> <hours> [دلیل]")
         return
-    uid, hours = int(args[0]), int(args[1])
+    uid, hours = int(args[0]), min(int(args[1]), 24 * 365)
     reason = " ".join(args[2:]) or "محدودسازی توسط مدیر (قاعده ۶)"
     from ..services import subscription as sub
 

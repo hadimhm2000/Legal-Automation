@@ -12,18 +12,18 @@ import asyncio
 import datetime as dt
 import hashlib
 import hmac
-import html
 import json
 import logging
 import os
 import secrets
 import time
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import settings
 from .notify import bot_ok, send_message
@@ -48,11 +48,11 @@ def _make_session() -> str:
 
 def _valid_session(value: str | None) -> bool:
     try:
-        exp_s, sig = value.split(".", 1)
+        exp_s, sig = (value or "").split(".", 1)
         exp = int(exp_s)
     except Exception:
         return False
-    return hmac.compare_digest(sig, _sign(exp_s)) and exp > time.time()
+    return hmac.compare_digest(sig.encode(), _sign(exp_s).encode()) and exp > time.time()
 
 
 def _client_ip(request: Request) -> str:
@@ -62,7 +62,13 @@ def _client_ip(request: Request) -> str:
 def _login_blocked(ip: str) -> bool:
     now = time.time()
     fails = [t for t in _login_fails.get(ip, []) if now - t < 600]
-    _login_fails[ip] = fails
+    if fails:
+        _login_fails[ip] = fails
+    else:
+        _login_fails.pop(ip, None)
+    if len(_login_fails) > 5000:                    # جلوگیری از رشد بی‌پایان حافظه
+        for k in [k for k, v in _login_fails.items() if not v or now - v[-1] >= 600]:
+            _login_fails.pop(k, None)
     return len(fails) >= 5
 
 
@@ -70,14 +76,42 @@ def _record_fail(ip: str):
     _login_fails.setdefault(ip, []).append(time.time())
 
 
+def _same_origin(request: Request) -> bool:
+    """اگر مرورگر Origin/Referer فرستاده، باید با Host همین پنل یکی باشد (لایه‌ی دوم ضد CSRF)."""
+    host = request.headers.get("host", "")
+    for h in ("origin", "referer"):
+        v = request.headers.get(h)
+        if v:
+            return urlsplit(v).netloc == host
+    return True
+
+
 def require_auth(request: Request):
     if not _valid_session(request.cookies.get(COOKIE)):
         raise HTTPException(status_code=401, detail="نشست معتبر نیست؛ دوباره وارد شوید.")
-    if request.method == "POST" and request.headers.get("X-Panel-CSRF") != "1":
-        raise HTTPException(status_code=403, detail="درخواست فاقد هدر CSRF است.")
+    # هر درخواستِ تغییردهنده (POST/PUT/PATCH/DELETE) هدر CSRF و هم‌مبدأ بودن لازم دارد
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        if request.headers.get("X-Panel-CSRF") != "1" or not _same_origin(request):
+            raise HTTPException(status_code=403, detail="درخواست فاقد هدر CSRF است.")
+
+
+def _cookie_secure(request: Request) -> bool:
+    if settings.COOKIE_SECURE:
+        return True
+    return (request.headers.get("x-forwarded-proto", request.url.scheme) or "").lower() == "https"
+
+
+def _page(page: int) -> int:
+    return max(1, min(int(page or 1), 100000))
 
 
 # ── کمکی‌ها ─────────────────────────────────────────────────────────────────
+def _like(q: str) -> str:
+    """الگوی LIKE امن: نویسه‌های % و _ در جستجوی مدیر معنای خاص نداشته باشند."""
+    q = q.strip()[:100].replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{q}%"
+
+
 def _iso(s) -> str:
     try:
         return (s or "")[:16].replace("T", " ")
@@ -117,8 +151,25 @@ def _toman(n) -> str:
 
 
 # ── برنامه ──────────────────────────────────────────────────────────────────
-app = FastAPI(title="پنل مدیریت — اتوماسیون ویژه خدمات حقوقی", docs_url=None, redoc_url=None)
+app = FastAPI(title="پنل مدیریت — اتوماسیون ویژه خدمات حقوقی", docs_url=None, redoc_url=None,
+              openapi_url=None)
 _db = None
+_broadcast_lock = asyncio.Lock()
+
+_CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+        "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers["Content-Security-Policy"] = _CSP
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    if request.url.path.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.on_event("startup")
@@ -126,6 +177,8 @@ async def _startup():
     global _db
     if not settings.PASSWORD:
         raise SystemExit("❌ ADMIN_PANEL_PASSWORD در .env تنظیم نشده است؛ پنل بدون رمز اجرا نمی‌شود.")
+    if len(settings.PASSWORD) < 10:
+        log.warning("⚠️ ADMIN_PANEL_PASSWORD کوتاه است؛ حداقل ۱۰ نویسه‌ی تصادفی بگذارید.")
     from legal_bot.db import DB
 
     _db = await DB().connect()
@@ -162,20 +215,23 @@ async def js():
 
 # ── احراز هویت ───────────────────────────────────────────────────────────────
 class LoginIn(BaseModel):
-    password: str
+    password: str = Field(max_length=256)
 
 
 @app.post("/api/login")
 async def login(body: LoginIn, request: Request, response: Response):
+    if not _same_origin(request):
+        raise HTTPException(403, "درخواست نامعتبر است.")
     ip = _client_ip(request)
     if _login_blocked(ip):
         raise HTTPException(429, "تلاش زیاد؛ ۱۰ دقیقه صبر کنید.")
-    if not secrets.compare_digest(body.password, settings.PASSWORD):
+    # مقایسه روی بایت: رمز غیر-ASCII دیگر TypeError/۵۰۰ نمی‌دهد
+    if not secrets.compare_digest(body.password.encode("utf-8"), settings.PASSWORD.encode("utf-8")):
         _record_fail(ip)
         raise HTTPException(401, "رمز اشتباه است.")
     _login_fails.pop(ip, None)
-    response.set_cookie(COOKIE, _make_session(), httponly=True, samesite="Lax",
-                        max_age=settings.SESSION_HOURS * 3600)
+    response.set_cookie(COOKIE, _make_session(), httponly=True, samesite="Strict",
+                        secure=_cookie_secure(request), max_age=settings.SESSION_HOURS * 3600)
     return {"ok": True}
 
 
@@ -277,8 +333,8 @@ async def users_list(request: Request, q: str = "", page: int = 1, plan: str = "
     d = db()
     where, params = [], []
     if q.strip():
-        like = f"%{q.strip()}%"
-        cond = "(u.first_name LIKE ? OR CAST(s.bale_id AS TEXT) LIKE ? OR s.phone LIKE ?)"
+        like = _like(q)
+        cond = "(u.first_name LIKE ? ESCAPE '\\' OR CAST(s.bale_id AS TEXT) LIKE ? ESCAPE '\\' OR s.phone LIKE ? ESCAPE '\\')"
         where.append(cond)
         params += [like, like, like]
     if plan:
@@ -293,7 +349,7 @@ async def users_list(request: Request, q: str = "", page: int = 1, plan: str = "
     w = ("WHERE " + " AND ".join(where)) if where else ""
     total = (await d.one(f"SELECT COUNT(*) c FROM users u JOIN subscriptions s ON s.bale_id=u.bale_id {w}",
                          tuple(params)))["c"]
-    limit, offset = 25, (max(1, page) - 1) * 25
+    limit, offset = 25, (_page(page) - 1) * 25
     rows = await d.all(
         f"SELECT u.bale_id, u.first_name, u.created_at, s.status, s.plan, s.cycle, "
         f"s.inquiries_left, s.quota_used, s.quota_total, s.phone, s.restricted_until, "
@@ -328,12 +384,12 @@ async def user_detail(uid: int, request: Request):
 
 
 class RestrictIn(BaseModel):
-    hours: int
-    reason: str = "محدودسازی از پنل مدیریت (قاعده ۶)"
+    hours: int = Field(ge=1, le=720)
+    reason: str = Field("محدودسازی از پنل مدیریت (قاعده ۶)", max_length=300)
 
 
 class DmIn(BaseModel):
-    text: str
+    text: str = Field(max_length=4000)
 
 
 @app.post("/api/users/{uid}/message")
@@ -359,7 +415,9 @@ async def user_restrict(uid: int, body: RestrictIn, request: Request):
     from legal_bot import config
     from legal_bot.services import subscription as sub
 
-    await sub.restrict(db(), uid, max(1, min(body.hours, 720)), body.reason[:300])
+    if not await db().get_user(uid):
+        raise HTTPException(404, "کاربر یافت نشد.")
+    await sub.restrict(db(), uid, body.hours, body.reason[:300])
     await sub.report_violation(None, db(), uid, "محدودسازی از پنل", body.reason[:300])
     u = await db().get_user(uid)
     if u and u.get("chat_id"):
@@ -392,15 +450,15 @@ async def invoices_list(request: Request, status: str = "", q: str = "", page: i
     else:
         where.append("i.status NOT IN ('expired','used')")
     if q.strip():
-        like = f"%{q.strip()}%"
-        cond = "(i.code LIKE ? OR CAST(i.bale_id AS TEXT) LIKE ? OR u.first_name LIKE ?)"
+        like = _like(q)
+        cond = "(i.code LIKE ? ESCAPE '\\' OR CAST(i.bale_id AS TEXT) LIKE ? ESCAPE '\\' OR u.first_name LIKE ? ESCAPE '\\')"
         where.append(cond)
         params += [like, like, like]
     w = "WHERE " + " AND ".join(where)
     total = (await d.one(
         f"SELECT COUNT(*) c FROM invoices i LEFT JOIN users u ON u.bale_id=i.bale_id {w}",
         tuple(params)))["c"]
-    limit, offset = 25, (max(1, page) - 1) * 25
+    limit, offset = 25, (_page(page) - 1) * 25
     rows = await d.all(
         f"SELECT i.id, i.code, i.bale_id, i.kind, i.amount_toman, i.status, i.plan, i.cycle, "
         f"i.payload, i.created_at, i.expires_at, i.reviewed_at, i.reject_reason, i.shortfall_toman, "
@@ -452,7 +510,7 @@ async def invoice_approve(code: str, request: Request):
 
 
 class RejectIn(BaseModel):
-    reason: str
+    reason: str = Field(max_length=300)
 
 
 @app.post("/api/invoices/{code}/reject")
@@ -472,7 +530,7 @@ async def invoice_reject(code: str, body: RejectIn, request: Request):
 
 
 class ShortfallIn(BaseModel):
-    amount: int
+    amount: int = Field(gt=0, le=10**10)
 
 
 @app.post("/api/invoices/{code}/shortfall")
@@ -505,7 +563,7 @@ async def runs_list(request: Request, status: str = "", q: str = "", page: int =
         params.append(int(q.strip()))
     w = ("WHERE " + " AND ".join(where)) if where else ""
     total = (await d.one(f"SELECT COUNT(*) c FROM check_runs r {w}", tuple(params)))["c"]
-    limit, offset = 30, (max(1, page) - 1) * 30
+    limit, offset = 30, (_page(page) - 1) * 30
     rows = await d.all(
         f"SELECT r.id, r.bale_id, u.first_name, r.kind, r.trigger, r.status, r.step, r.steps_ok, "
         f"r.new_items, r.error_code, r.started_at, r.finished_at FROM check_runs r "
@@ -519,7 +577,7 @@ async def errors_list(request: Request, page: int = 1):
     require_auth(request)
     d = db()
     total = (await d.one("SELECT COUNT(*) c FROM error_events"))["c"]
-    limit, offset = 30, (max(1, page) - 1) * 30
+    limit, offset = 30, (_page(page) - 1) * 30
     rows = await d.all(
         "SELECT e.id, e.run_id, e.bale_id, u.first_name, e.step, e.category, e.message, e.created_at "
         "FROM error_events e LEFT JOIN users u ON u.bale_id=e.bale_id ORDER BY e.id DESC LIMIT ? OFFSET ?",
@@ -533,13 +591,13 @@ async def notices_list(request: Request, q: str = "", page: int = 1):
     d = db()
     where, params = [], []
     if q.strip():
-        like = f"%{q.strip()}%"
-        cond = "(n.case_number LIKE ? OR n.external_id LIKE ? OR n.branch LIKE ? OR CAST(n.bale_id AS TEXT) LIKE ?)"
+        like = _like(q)
+        cond = "(n.case_number LIKE ? ESCAPE '\\' OR n.external_id LIKE ? ESCAPE '\\' OR n.branch LIKE ? ESCAPE '\\' OR CAST(n.bale_id AS TEXT) LIKE ? ESCAPE '\\')"
         where.append(cond)
         params += [like, like, like, like]
     w = ("WHERE " + " AND ".join(where)) if where else ""
     total = (await d.one(f"SELECT COUNT(*) c FROM notices n {w}", tuple(params)))["c"]
-    limit, offset = 30, (max(1, page) - 1) * 30
+    limit, offset = 30, (_page(page) - 1) * 30
     rows = await d.all(
         f"SELECT n.id, n.bale_id, u.first_name, n.external_id, n.case_number, n.branch, n.notice_type, "
         f"n.sent_date, n.status FROM notices n LEFT JOIN users u ON u.bale_id=n.bale_id {w} "
@@ -552,7 +610,7 @@ async def cases_list(request: Request, page: int = 1):
     require_auth(request)
     d = db()
     total = (await d.one("SELECT COUNT(*) c FROM tracked_cases"))["c"]
-    limit, offset = 30, (max(1, page) - 1) * 30
+    limit, offset = 30, (_page(page) - 1) * 30
     rows = await d.all(
         "SELECT t.bale_id, u.first_name, t.case_number, t.portal, t.last_change, t.last_checked, "
         "t.created_at FROM tracked_cases t LEFT JOIN users u ON u.bale_id=t.bale_id "
@@ -562,7 +620,7 @@ async def cases_list(request: Request, page: int = 1):
 
 # ── پیام همگانی ────────────────────────────────────────────────────────────
 class BroadcastIn(BaseModel):
-    text: str
+    text: str = Field(max_length=4000)
     target: str = "all"          # all | active | paid | free | beta
 
 
@@ -571,6 +629,13 @@ async def broadcast(body: BroadcastIn, request: Request):
     require_auth(request)
     if not body.text.strip():
         raise HTTPException(422, "متن پیام خالی است.")
+    if _broadcast_lock.locked():
+        raise HTTPException(409, "یک ارسال همگانی در حال انجام است؛ تا پایان آن صبر کنید.")
+    async with _broadcast_lock:
+        return await _do_broadcast(body)
+
+
+async def _do_broadcast(body: BroadcastIn):
     d = db()
     cond = {"all": "", "active": "JOIN subscriptions s ON s.bale_id=u.bale_id "
                                  "WHERE s.status IN ('FREE_ACTIVE','PAID_ACTIVE')",
@@ -604,7 +669,7 @@ async def beta_list(request: Request):
 
 
 class BetaIn(BaseModel):
-    bale_id: int
+    bale_id: int = Field(gt=0, le=2**53)
 
 
 @app.post("/api/beta")
@@ -657,6 +722,11 @@ async def settings_view(request: Request):
         "admin_free": config.ADMIN_FREE, "guide_version": guide_ver,
         "guide_file_set": bool(guide_file), "panel_port": settings.PORT,
     }
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_err(request, exc):
+    return JSONResponse({"detail": "ورودی نامعتبر است؛ مقادیر فرم را بررسی کنید."}, status_code=422)
 
 
 @app.exception_handler(HTTPException)

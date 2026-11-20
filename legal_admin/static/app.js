@@ -28,7 +28,7 @@ function toast(msg, kind = "") {
   $("#toasts").appendChild(t);
   setTimeout(() => t.remove(), 4200);
 }
-function tag(text, cls) { return `<span class="tag ${cls || ""}">${text}</span>`; }
+function tag(text, cls) { return `<span class="tag ${esc(cls || "")}">${esc(text)}</span>`; }
 
 const PLAN_FA = { free: "رایگان", base: "پایه", select: "برگزیده", pro: "پیشرو", expert: "تخصصی", org: "سازمانی", "-": "بدون پلن" };
 const STATUS_FA = { NEW: ["جدید", "info"], FREE_ACTIVE: ["فعال رایگان", "ok"], PAID_ACTIVE: ["پرداختی", "ok"], LOCKED: ["قفل", "bad"] };
@@ -129,14 +129,14 @@ async function loadDashboard() {
 
   const tot = Math.max(1, s.plans.reduce((a, p) => a + p.c, 0));
   $("#chartPlans").innerHTML = s.plans.map(p => `
-    <div class="pl"><span>${PLAN_FA[p.plan] || p.plan}</span>
+    <div class="pl"><span>${esc(PLAN_FA[p.plan] || p.plan)}</span>
       <span class="track"><i style="width:${p.c / tot * 100}%"></i></span>
       <b>${fa(p.c)}</b></div>`).join("") || `<p class="empty">مشترکی نیست.</p>`;
 
   $("#eventsFeed").innerHTML = s.events.map(e => `
-    <div class="fe"><span class="when">${e.created_at_fa || "-"}</span>
-      <span class="who">${e.first_name || e.bale_id}</span>
-      <span class="what ev-${e.event}"><b>${EV_FA[e.event] || e.event}</b> ${esc(e.detail || "")}</span></div>`)
+    <div class="fe"><span class="when">${esc(e.created_at_fa || "-")}</span>
+      <span class="who">${esc(e.first_name || e.bale_id)}</span>
+      <span class="what ev-${esc(e.event)}"><b>${esc(EV_FA[e.event] || e.event)}</b> ${esc(e.detail || "")}</span></div>`)
     .join("") || `<p class="empty">رویدادی نیست.</p>`;
   await updateBadge();
 }
@@ -183,18 +183,18 @@ async function loadInvoices() {
     const [stt, stc] = INV_STATUS_FA[i.status] || [i.status, ""];
     const actionable = ["receipt_sent", "pending", "shortfall_wait"].includes(i.status);
     return `<tr>
-      <td class="num">${i.code}</td>
+      <td class="num">${esc(i.code)}</td>
       <td>${esc(i.first_name || "")} <span class="num">(${i.bale_id})</span></td>
-      <td>${KIND_FA[i.kind] || i.kind}</td>
+      <td>${esc(KIND_FA[i.kind] || i.kind)}</td>
       <td class="num">${fa(i.amount_toman)}</td>
       <td>${i.plan ? tag(PLAN_FA[i.plan] || i.plan, "info") + " " + (i.cycle === "quarterly" ? "(۳ ماهه)" : "") : "—"}</td>
       <td>${tag(stt, stc)}${i.shortfall_toman ? "<br><small>کسری: " + fa(i.shortfall_toman) + "</small>" : ""}</td>
       <td class="num">${i.created_at_fa || "—"}</td>
       <td class="num">${i.expires_at_fa || "—"}</td>
       <td class="actions">${actionable ? `
-        <button class="btn" data-act="inv-ok" data-code="${i.code}">تأیید</button>
-        <button class="btn btn-danger" data-act="inv-no" data-code="${i.code}">رد</button>
-        ${i.status === "receipt_sent" ? `<button class="btn" data-act="inv-short" data-code="${i.code}" data-amt="${i.amount_toman || 0}">کسری</button>` : ""}` : `<button class="btn" data-act="user" data-id="${i.bale_id}">کاربر</button>`}</td>
+        <button class="btn" data-act="inv-ok" data-code="${esc(i.code)}">تأیید</button>
+        <button class="btn btn-danger" data-act="inv-no" data-code="${esc(i.code)}">رد</button>
+        ${i.status === "receipt_sent" ? `<button class="btn" data-act="inv-short" data-code="${esc(i.code)}" data-amt="${i.amount_toman || 0}">کسری</button>` : ""}` : `<button class="btn" data-act="user" data-id="${i.bale_id}">کاربر</button>`}</td>
     </tr>`;
   }).join("") || `<tr><td colspan="9" class="empty">فاکتوری در این وضعیت نیست.</td></tr>`;
   pagerInfo("invPageInfo", d.total, page.invoices, 25);
@@ -210,10 +210,10 @@ async function loadRuns() {
     return `<tr>
       <td class="num">${r.id}</td>
       <td>${esc(r.first_name || "")} <span class="num">(${r.bale_id || "—"})</span></td>
-      <td>${RUN_KIND_FA[r.kind] || r.kind}</td>
+      <td>${esc(RUN_KIND_FA[r.kind] || r.kind)}</td>
       <td>${r.trigger === "manual" ? "دستی" : "زمان‌بندی"}</td>
       <td>${tag(r.status, cls)}</td>
-      <td>${r.step || "—"}</td>
+      <td>${esc(r.step || "—")}</td>
       <td class="num">${fa(r.new_items || 0)}</td>
       <td>${r.error_code ? tag(r.error_code, "bad") : "—"}</td>
       <td class="num">${r.started_at || "—"}</td>
@@ -226,7 +226,7 @@ async function loadErrors() {
   $("#errTable tbody").innerHTML = d.rows.map(e => `<tr>
     <td class="num">${e.id}</td>
     <td>${esc(e.first_name || "")} <span class="num">(${e.bale_id || "—"})</span></td>
-    <td class="num">${e.run_id || "—"}</td><td>${e.step || "—"}</td>
+    <td class="num">${esc(e.run_id || "—")}</td><td>${esc(e.step || "—")}</td>
     <td>${tag(e.category, "bad")}</td>
     <td style="white-space:normal;min-width:260px">${esc((e.message || "").slice(0, 160))}</td>
     <td class="num">${e.created_at || "—"}</td></tr>`).join("") || `<tr><td colspan="7" class="empty">خطایی ثبت نشده. 👍</td></tr>`;
@@ -237,8 +237,8 @@ async function loadNotices() {
   const d = await api(`/notices?page=${page.notices}&q=${encodeURIComponent(q)}`);
   $("#noticeTable tbody").innerHTML = d.rows.map(n => `<tr>
     <td>${esc(n.first_name || "")} <span class="num">(${n.bale_id})</span></td>
-    <td class="num">${n.external_id || "—"}</td>
-    <td class="num">${n.case_number || "—"}</td>
+    <td class="num">${esc(n.external_id || "—")}</td>
+    <td class="num">${esc(n.case_number || "—")}</td>
     <td>${esc(n.branch || "—")}</td><td>${esc(n.notice_type || "—")}</td>
     <td class="num">${n.sent_date_fa || "—"}</td>
     <td>${tag(n.status === "done" ? "دیده‌شده" : "باز", n.status === "done" ? "info" : "warn")}</td></tr>`)
@@ -249,7 +249,7 @@ async function loadCases() {
   const d = await api(`/cases?page=${page.cases}`);
   $("#caseTable tbody").innerHTML = d.rows.map(c => `<tr>
     <td>${esc(c.first_name || "")} <span class="num">(${c.bale_id})</span></td>
-    <td class="num">${c.case_number}</td>
+    <td class="num">${esc(c.case_number)}</td>
     <td>${c.portal === "lawyer" ? "وکیل" : "شخص"}</td>
     <td class="num">${c.last_change_fa || "—"}</td>
     <td class="num">${c.last_checked_fa || "—"}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">پرونده‌ای پیگیری نمی‌شود.</td></tr>`;
@@ -436,7 +436,7 @@ async function openUser(uid) {
       <div>
         <h4>اشتراک</h4>
         <div class="row"><span>وضعیت</span><span>${tag(stt, stc)}</span></div>
-        <div class="row"><span>پلن</span><span>${s.plan ? (PLAN_FA[s.plan] || s.plan) + " " + (s.cycle === "quarterly" ? "(۳ ماهه)" : s.cycle === "monthly" ? "(ماهانه)" : "") : "—"}</span></div>
+        <div class="row"><span>پلن</span><span>${s.plan ? esc(PLAN_FA[s.plan] || s.plan) + " " + (s.cycle === "quarterly" ? "(۳ ماهه)" : s.cycle === "monthly" ? "(ماهانه)" : "") : "—"}</span></div>
         <div class="row"><span>اعتبار استعلام</span><span>${fa(s.inquiries_left ?? 0)}</span></div>
         <div class="row"><span>سهمیه ماه</span><span>${quota}</span></div>
         <div class="row"><span>تا تاریخ</span><span>${s.paid_until_fa || "—"}</span></div>
@@ -451,13 +451,13 @@ async function openUser(uid) {
       </div>
       <div>
         <h4>فاکتورهای اخیر</h4>
-        ${d.invoices.map(i => { const [t, c] = INV_STATUS_FA[i.status] || [i.status, ""]; return `<div class="row"><span>${i.code} · ${KIND_FA[i.kind] || i.kind} · ${fa(i.amount_toman)} ت</span><span>${tag(t, c)}</span></div>`; }).join("") || `<p class="empty">ندارد</p>`}
+        ${d.invoices.map(i => { const [t, c] = INV_STATUS_FA[i.status] || [i.status, ""]; return `<div class="row"><span>${esc(i.code)} · ${esc(KIND_FA[i.kind] || i.kind)} · ${fa(i.amount_toman)} ت</span><span>${tag(t, c)}</span></div>`; }).join("") || `<p class="empty">ندارد</p>`}
         <h4>پرونده‌های پیگیری (${fa(d.cases.length)})</h4>
-        ${d.cases.map(c => `<div class="row"><span>${c.case_number}</span><span>${c.portal === "lawyer" ? "وکیل" : "شخص"}</span></div>`).join("") || `<p class="empty">ندارد</p>`}
+        ${d.cases.map(c => `<div class="row"><span>${esc(c.case_number)}</span><span>${c.portal === "lawyer" ? "وکیل" : "شخص"}</span></div>`).join("") || `<p class="empty">ندارد</p>`}
       </div>
     </div>
     <h4>رویدادهای پلن</h4>
-    ${d.events.map(ev => `<div class="row"><span>${ev.created_at_fa || "—"}</span><span>${EV_FA[ev.event] || ev.event} — ${esc(ev.detail || "")}</span></div>`).join("") || `<p class="empty">ندارد</p>`}`);
+    ${d.events.map(ev => `<div class="row"><span>${ev.created_at_fa || "—"}</span><span>${esc(EV_FA[ev.event] || ev.event)} — ${esc(ev.detail || "")}</span></div>`).join("") || `<p class="empty">ندارد</p>`}`);
   /* دکمه‌های محدودیت داخل مودال */
   $("#modalBody").addEventListener("click", async (ev) => {
     const b = ev.target.closest("[data-act=restrict],[data-act=unrestrict]");

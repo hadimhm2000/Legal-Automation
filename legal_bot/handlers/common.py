@@ -18,7 +18,9 @@ class BetaGate(BaseMiddleware):
         if user is None:
             return
         chat = event.chat if isinstance(event, Message) else (event.message.chat if event.message else None)
-        if chat is not None and chat.type != "private":
+        if chat is None:        # callback بدون پیام (inline) — هیچ هندلری برایش معنا ندارد
+            return
+        if chat.type != "private":
             return
         if isinstance(event, Message) and (event.text or "").startswith("/start"):
             return await handler(event, data)
