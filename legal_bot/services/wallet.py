@@ -108,3 +108,18 @@ async def release_expired(db: DB) -> int:
     for r in rows:
         n += bool(await release_invoice(db, r))
     return n
+
+
+async def history(db: DB, uid: int, limit: int = 10) -> list[dict]:
+    return await db.all("SELECT * FROM wallet_tx WHERE bale_id=? ORDER BY id DESC LIMIT ?", (uid, limit))
+
+
+async def adjust(db: DB, uid: int, delta: int, note: str = "") -> bool:
+    """تغییر دستیِ موجودی توسط مدیر (شارژ یا کسر). ref یکتا برای هر بار."""
+    import time
+    return await _tx(db, uid, int(delta), "admin", f"adm:{uid}:{time.time_ns()}", note)
+
+
+async def totals(db: DB) -> dict:
+    r = await db.one("SELECT COUNT(*) n, COALESCE(SUM(balance_toman),0) s FROM wallets WHERE balance_toman>0")
+    return {"holders": int(r["n"]), "sum": int(r["s"])}

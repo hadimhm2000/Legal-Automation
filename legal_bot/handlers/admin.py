@@ -5,6 +5,8 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from .. import config
+from ..utils import to_en_digits
+from ..utils import to_en_digits
 
 router = Router(name="admin")
 router.message.filter(F.from_user.id == config.ADMIN_ID if config.ADMIN_ID else F.from_user.id == -1)
@@ -49,6 +51,12 @@ async def user(message: Message, command: CommandObject, db):
                      f"month={s['quota_month'] or '-'} free_used={s['free_used']} phone={s['phone'] or '-'}")
         lines.append(f"paid_until={s['paid_until']} restricted_until={s['restricted_until']} "
                      f"reason={s['restriction_reason'] or '-'}")
+    from ..services import wallet
+
+    lines.append(f"wallet={await wallet.balance(db, uid):,} تومان")
+    from ..services import wallet
+
+    lines.append(f"wallet={await wallet.balance(db, uid):,} تومان")
     lines.append(f"notices={n['c'] if n else 0}")
     await message.answer("\n".join(lines))
 
@@ -145,6 +153,60 @@ async def load(message: Message):
         f"رم آزاد سرور: {st['free_ram_mb']:,} مگابایت (حداقل لازم: {config.MIN_FREE_RAM_MB:,})")
 
 
+_KIND_FA = {"refund": "استرداد خطای سامانه", "invoice_use": "کسر برای فاکتور",
+            "invoice_release": "بازگشت فاکتور منقضی", "admin": "تغییر مدیر"}
+
+
+def _toman(n: int) -> str:
+    return f"{int(n):,} تومان"
+
+
+@router.message(Command("legal_wallet"))
+async def wallet_cmd(message: Message, command: CommandObject, db):
+    from ..services import wallet
+
+    arg = to_en_digits(command.args or "").strip()
+    if not arg.isdigit():
+        t = await wallet.totals(db)
+        top = await db.all("SELECT bale_id, balance_toman FROM wallets WHERE balance_toman>0 "
+                           "ORDER BY balance_toman DESC LIMIT 10")
+        lines = [f"💼 کیف پول‌ها: {t['holders']} کاربر دارای موجودی — جمع {_toman(t['sum'])}"]
+        lines += [f"{r['bale_id']}: {_toman(r['balance_toman'])}" for r in top]
+        lines.append("جزئیات: /legal_wallet <id>")
+        await message.answer("\n".join(lines))
+        return
+    uid = int(arg)
+    rows = await wallet.history(db, uid, 10)
+    lines = [f"💼 کاربر {uid} — موجودی: {_toman(await wallet.balance(db, uid))}"]
+    for r in rows:
+        sign = "+" if r["delta_toman"] > 0 else ""
+        lines.append(f"{r['created_at'][5:16]} {sign}{int(r['delta_toman']):,} "
+                     f"{_KIND_FA.get(r['kind'], r['kind'])} [{r['ref'][:14]}]")
+    if not rows:
+        lines.append("تراکنشی ندارد.")
+    await message.answer("\n".join(lines))
+
+
+@router.message(Command("legal_wallet_add"))
+async def wallet_add(message: Message, command: CommandObject, db):
+    from ..services import wallet
+    from ..utils import to_en_digits
+
+    parts = to_en_digits(command.args or "").split(None, 2)
+    try:
+        uid, amount = int(parts[0]), int(parts[1])
+        if not amount:
+            raise ValueError
+    except Exception:
+        await message.answer("/legal_wallet_add <id> <مبلغ تومان؛ منفی = کسر> [توضیح]")
+        return
+    ok = await wallet.adjust(db, uid, amount, parts[2] if len(parts) > 2 else "")
+    if not ok:
+        await message.answer("⚠️ انجام نشد (موجودی نمی‌تواند منفی شود).")
+        return
+    await message.answer(f"✅ انجام شد. موجودی {uid}: {_toman(await wallet.balance(db, uid))}")
+
+
 @router.message(Command("legal_help"))
 async def help_(message: Message):
     await message.answer(
@@ -158,6 +220,8 @@ async def help_(message: Message):
         "/legal_allow <id> — افزودن به فهرست بتا (در ربات اصلی هم LEGAL_BETA_IDS لازم است)\n"
         "/legal_deny <id> — حذف از فهرست بتا\n"
         "/legal_guide — جایگزینی PDF راهنما (بعد از دستور، فایل را بفرستید)\n"
+        "/legal_wallet [id] — کیف پول‌ها / موجودی و تراکنش‌های یک کاربر\n"
+        "/legal_wallet_add <id> <مبلغ> [توضیح] — شارژ یا کسر دستی کیف پول (مبلغ منفی = کسر)\n"
         "/legal_tick — ارسال دستی یادآوری‌های امروز\n"
         "/legal_load — بار سرور: کارهای هم‌زمان، صف و رم آزاد\n"
         "تایید/رد/کسری رسیدها با دکمه‌های زیر هر رسید انجام می‌شود؛ گزارش تخلف‌ها خودکار ارسال می‌شود.")

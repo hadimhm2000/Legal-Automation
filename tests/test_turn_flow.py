@@ -55,7 +55,7 @@ PAGE = """<html><head><meta charset="utf-8"><style>.hide{display:none}</style></
 <button id="btnNextStep" class="hide" onclick="goNext()">مرحله ی بعدی</button>
 <div id="reasonModal" class="hide"><table><tbody>
   <tr onclick="pickReason(this)"><td>15</td><td><button>انتخاب</button></td><td>درخواست جلب متهم</td></tr>
-  <tr onclick="pickReason(this)"><td>16</td><td><button>انتخاب</button></td><td>ارائه دلائل</td></tr>
+  <tr onclick="pickReason(this)"><td>16</td><td><button>انتخاب</button></td><td>ارائه ادله و مستندات (فيلم، صوت و ...)</td></tr>
   <tr onclick="pickReason(this)"><td>17</td><td><button>انتخاب</button></td><td>پیگیری پرونده</td></tr>
   <tr onclick="pickReason(this)"><td>1</td><td><button>انتخاب</button></td><td>معرفي وراث محكوم عليه</td></tr>
 </tbody></table></div>
@@ -316,7 +316,7 @@ async def test_reason_error_first_fallback_is_arze_delael():
     assert site.create_count == 2                       # اول ۵۰۰ (خطای علت) بعد ۲۰۰
     assert fa_date(cands[0]) in when
     # به کاربر اعلام شد که علت به «ارائه دلائل» تغییر کرد (اولین جایگزین)
-    assert any("ارائه دلائل" in s for s in job.said)
+    assert any("ارائه ادله" in s for s in job.said)
     assert not any("درخواست جلب متهم» تغییر" in s for s in job.said)
 
 
@@ -334,7 +334,7 @@ async def test_reason_error_second_fallback_is_peygiri_proande():
         await br.close()
     assert site.create_count == 1               # با «پیگیری پرونده» ثبت شد
     assert fa_date(cands[0]) in when
-    assert any("ارائه دلائل" in s for s in job.said)
+    assert any("ارائه ادله" in s for s in job.said)
     assert any("پیگیری پرونده" in s for s in job.said)
 
 
@@ -352,7 +352,7 @@ async def test_reason_error_at_day_click_fixed_same_day():
     finally:
         await br.close()
     assert fa_date(cands[0]) in when          # همان روز رزرو شد، نه روز بعد
-    assert any("ارائه دلائل" in s for s in job.said)
+    assert any("ارائه ادله" in s for s in job.said)
 
 
 async def test_all_reasons_rejected_stops_with_clear_message():
@@ -552,7 +552,7 @@ MDS_PAGE = """<html><head><meta charset="utf-8"><style>.hide{display:none}</styl
 <button id="btnNextStep" class="hide" onclick="goNext()">مرحله ی بعدی</button>
 <div id="reasonModal" class="hide"><table><tbody>
   <tr onclick="pickReason(this)"><td>15</td><td><button>انتخاب</button></td><td>درخواست جلب متهم</td></tr>
-  <tr onclick="pickReason(this)"><td>16</td><td><button>انتخاب</button></td><td>ارائه دلائل</td></tr>
+  <tr onclick="pickReason(this)"><td>16</td><td><button>انتخاب</button></td><td>ارائه ادله و مستندات (فيلم، صوت و ...)</td></tr>
   <tr onclick="pickReason(this)"><td>17</td><td><button>انتخاب</button></td><td>پیگیری پرونده</td></tr>
 </tbody></table></div>
 <button id="btnCreateUnitTurn" class="hide" onclick="doCreate()">ثبت و دریافت نوبت</button>

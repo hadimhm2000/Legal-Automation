@@ -64,3 +64,21 @@ async def test_never_negative(db):
 async def test_free_invoice_no_refund(db):
     inv = await _inv(db, price=0)
     assert await wallet.refund_failed(db, inv, 1) is None
+
+
+async def test_admin_adjust_and_history(db):
+    assert await wallet.adjust(db, 9, 50_000, "gift")
+    assert await wallet.adjust(db, 9, -20_000)
+    assert not await wallet.adjust(db, 9, -100_000)
+    assert await wallet.balance(db, 9) == 30_000
+    assert len(await wallet.history(db, 9)) == 2
+    assert (await wallet.totals(db))["sum"] == 30_000
+
+
+async def test_admin_adjust_and_history(db):
+    assert await wallet.adjust(db, 9, 50_000, "gift")
+    assert await wallet.adjust(db, 9, -20_000)
+    assert not await wallet.adjust(db, 9, -100_000)
+    assert await wallet.balance(db, 9) == 30_000
+    assert len(await wallet.history(db, 9)) == 2
+    assert (await wallet.totals(db))["sum"] == 30_000
