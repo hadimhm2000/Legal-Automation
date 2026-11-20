@@ -206,3 +206,20 @@ def missing_required():
     if REQUIRE_HANDOFF and not HANDOFF_SECRET:
         out.append("HANDOFF_SECRET")
     return out
+
+
+# ── سرعت تقویم/ثبت نوبت ──
+# مکث‌های بعد از کلیک روزِ تقویم و «ثبت و دریافت نوبت» به‌جای ۱٫۸–۲ ثانیه ثابت،
+# منتظر نتیجه می‌مانند؛ این مقدار مکث کوتاه (میلی‌ثانیه) بین کلیک‌های تقویم است.
+TURN_FAST_PAUSE_MS = _int("TURN_FAST_PAUSE_MS", 350)
+TURN_RESULT_WAIT_MS = _int("TURN_RESULT_WAIT_MS", 6000)   # حداکثر انتظار برای نتیجه‌ی ثبت نوبت
+
+# ── کیف پول و استرداد خطای سامانه ──
+# خطای شناسایی‌شده‌ی سامانه/ربات (نه خطای کاربر) ← ٪TURN_FEE_PCT هزینه کسر می‌شود و
+# مابقی به کیف پول کاربر برمی‌گردد؛ در درخواست بعدی از موجودی کیف پول کسر می‌شود.
+TURN_FEE_PCT = _int("TURN_FEE_PCT", 50)
+TURN_REFUND_CATEGORIES = frozenset(
+    x.strip() for x in os.environ.get(
+        "TURN_REFUND_CATEGORIES",
+        "SANA_DOWN,TIMEOUT,BROWSER_CRASH,PARSE_CHANGED,LOGIN_UI_CHANGED,PRINT_FAILED,SITE_BUSY,SVC_DELAY,UNKNOWN"
+    ).split(",") if x.strip())

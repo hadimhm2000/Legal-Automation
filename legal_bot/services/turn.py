@@ -232,6 +232,25 @@ def _is_capacity_error(txt: str) -> bool:
     return all(w in t for w in S.CAPACITY_ERROR_WORDS)
 
 
+def _is_already_booked_error(txt: str) -> bool:
+    """sweet-alert «برای این پرونده به تاریخ 1405/09/04 نوبت گرفته شده است. در صورت
+    نیاز نوبت قبلی باطل شود» (دستور کارفرما): متن خطا به کاربر فرستاده و روند متوقف می‌شود."""
+    t = normalize_fa(txt or "")
+    return bool(t) and all(normalize_fa(w) in t for w in S.ALREADY_BOOKED_WORDS)
+
+
+def _is_next_day_error(txt: str) -> bool:
+    t = normalize_fa(txt or "")
+    return bool(t) and any(all(normalize_fa(w) in t for w in words) for words in S.NEXT_DAY_ERROR_WORDS)
+
+
+def _next_day_message(site_text: str, fallback: str) -> str:
+    """خطای ظرفیت/بازه: متن خطای سامانه + «روز بعد درخواست نوبت خود را ثبت بفرمائید»."""
+    if site_text and _is_next_day_error(site_text):
+        return T.TURN_NEXT_DAY.format(text=site_text[:300])
+    return fallback + "\nلطفاً روز بعد درخواست نوبت خود را ثبت بفرمائید."
+
+
 def _is_case_not_found_error(txt: str) -> bool:
     """sweet-alert «هیچ پرونده ای با شماره «...» یافت نشد .» (HTML ارسالی کارفرما —
     h2 داخل sweet-alert) یا «موردی یافت نشد»: بعد از استعلامِ «بازیابی پرونده» یعنی
@@ -253,6 +272,7 @@ class Turn:
         self._reason_fallbacks: list[str] = list(S.TURN_REASON_FALLBACKS)
         self._active_range: tuple[dt.date | None, dt.date | None] = (None, None)
         self._last_create_error = ""                # متن هشدارِ آخرین ثبتِ ناموفق
+        self._last_block_text = ""                  # آخرین خطای ظرفیت/بازه (برای پیام «روز بعد»)
 
     # ── پیام‌های سامانه (sweet-alert / alert-danger / h2) ──────────────
     async def _alert_text(self) -> str:
@@ -269,6 +289,34 @@ class Turn:
             except Exception:
                 continue
         return ""
+
+    async def _raise_if_already_booked(self, txt: str | None = None):
+        """sweet-alert «... نوبت گرفته شده است. در صورت نیاز نوبت قبلی باطل شود»:
+        متن خطا برای کاربر می‌رود و روند همین پرونده متوقف می‌شود (دستور کارفرما)."""
+        if txt is None:
+            txt = await self._alert_text()
+            if not _is_already_booked_error(txt):
+                txt = ""
+                for line in (await page_text(self.page)).splitlines():   # متن ساده‌ی <p> صفحه
+                    if _is_already_booked_error(line):
+                        txt = line.strip()
+                        break
+        if _is_already_booked_error(txt):
+            await self._close_alert()
+            raise FlowError("TURN_ALREADY_BOOKED", f"already booked: {txt[:150]}",
+                            T.TURN_ALREADY_BOOKED.format(text=txt[:300]))
+
+    async def _wait_create_result(self):
+        """بعد از «ثبت و دریافت نوبت» به‌جای مکث ثابتِ ۲ ثانیه‌ای، به‌محض آمدن نتیجه
+        (صفحه‌ی Detail یا پیام سامانه) ادامه می‌دهد."""
+        async def _detail() -> bool:
+            return "#/Detail" in self.page.url
+
+        async def _alert() -> bool:
+            return await self.page.locator(S.ALERT_SWEET).first.is_visible()
+
+        await wait_first({"detail": _detail, "alert": _alert},
+                         timeout_ms=config.TURN_RESULT_WAIT_MS, poll=0.15)
 
     async def _close_alert(self):
         """بستن پیام سامانه (دکمه‌ی «بستن» sweet-alert) تا مسیر ادامه پیدا کند."""
@@ -674,8 +722,13 @@ class Turn:
         """کلیک سلولِ روز با برچسبِ data-lb-day (برچسبِ خودِ ربات است؛ data-day
         متعلق به خودِ تقویم mds است و دست نمی‌خورد)."""
         await self.page.evaluate(DAYS_JS)          # تازه‌سازی برچسب data-lb-day
-        await self.page.locator(f'[data-lb-day="{idx}"]').first.click()
-        await human_pause(self.page, 1800)
+        loc = self.page.locator(f'[data-lb-day="{idx}"]').first
+        try:
+            await loc.click(timeout=5_000)         # قبلاً ۲۰ ثانیه منتظر می‌ماند (Timeout 20000ms)
+        except Exception:
+            # سلول پوشیده/ناپایدار است: کلیک مستقیم DOM به‌جای انتظار طولانی
+            await loc.evaluate("el => el.click()", timeout=3_000)
+        await human_pause(self.page, config.TURN_FAST_PAUSE_MS)
 
     async def _select_day(self, target: dt.date) -> bool:
         """روز هدف در تقویم کلیک می‌شود؛ اگر ماهِ نمایش‌داده‌شده عقب‌تر بود، با فلشِ
@@ -698,7 +751,7 @@ class Turn:
                 break                            # فلشِ ماه بعد نبود
             with contextlib.suppress(Exception):
                 await self.page.locator('[data-lb-next="1"]').first.click()
-            await human_pause(self.page, 900)
+            await human_pause(self.page, config.TURN_FAST_PAUSE_MS)
         info = await self.page.evaluate(DAYS_JS)
         shown = parse_jalali_header(info.get("header") or "")
         if shown and (shown[0], shown[1]) != (tj.year, tj.month):
@@ -724,8 +777,8 @@ class Turn:
             "capacity": self._capacity_error,
             "reason": self._reason_error,
             "range": self._range_error,
-        }, timeout_ms=12_000)
-        await human_pause(self.page, 600)
+        }, timeout_ms=12_000, poll=0.15)
+        await human_pause(self.page, config.TURN_FAST_PAUSE_MS // 2)
 
     async def _click_yes(self) -> bool:
         """دکمه‌ی تأیید «بلی» با تطبیق کاملِ متن.
@@ -773,7 +826,7 @@ class Turn:
             tries += 1
             await self.page.evaluate(TIMES_JS)      # تازه‌سازی برچسب data-time
             with contextlib.suppress(Exception):
-                await self.page.locator(f'[data-time="{t["idx"]}"]').first.click()
+                await self.page.locator(f'[data-time="{t["idx"]}"]').first.click(timeout=5_000)
             status = None
             try:
                 async with self.page.expect_response(lambda r: S.TURN_CREATE_API in r.url,
@@ -783,12 +836,18 @@ class Turn:
                 status = (await ri.value).status
             except Exception:
                 status = None
-            await human_pause(self.page, 2000)
+            await self._wait_create_result()
+            if "#/Detail" not in self.page.url:
+                # «برای این پرونده به تاریخ ... نوبت گرفته شده است» ← توقف + ارسال متن خطا
+                await self._raise_if_already_booked()
             if status == 200 or "#/Detail" in self.page.url:
                 return (f"روز {fa_date(target)} ({weekday_fa(target)}) ساعت {to_fa_digits(t['time'])}",
                         tries, False)
             # متن هشدارِ خطا قبل از بستن خوانده می‌شود (مثل خطای بازه‌ی فعال — steps 2)
             self._last_create_error = await self._read_create_error()
+            await self._raise_if_already_booked(self._last_create_error)
+            if _is_next_day_error(self._last_create_error):
+                self._last_block_text = self._last_create_error
             await click_text(self.page, *S.TURN_CLOSE, timeout=4000)
             # «با عرض پوزش، ظرفیت نوبت دهی در زمان انتخاب شده تکمیل شده است.»
             # ← مستقیم روزِ بعد (دستور کارفرما — HTML ارسالی)
@@ -823,6 +882,7 @@ class Turn:
                 if not await self._select_day(target):
                     break                  # چنین روزی در تقویم قابل انتخاب نبود ← روز بعد
                 await self._wait_turn_table()
+                await self._raise_if_already_booked()
                 err = await self._day_error()
                 if err:
                     # پنجشنبه/تعطیل رسمی/عدم حضور دادورز ← حتماً روز بعد (دستور کارفرما)
@@ -833,6 +893,7 @@ class Turn:
                 if cap:
                     # «ظرفیت نوبت دهی ... تکمیل شده است» ← مستقیم روزِ بعد (دستور کارفرما)
                     log.info("turn day %s capacity full: %s", target, cap[:150])
+                    self._last_block_text = cap
                     await self._close_alert()
                     break
                 rng = await self._range_error()
@@ -847,8 +908,8 @@ class Turn:
                 if day_full:
                     break                  # ظرفیت این روز تکمیل شد ← مستقیم روزِ بعد
                 if tries >= config.TURN_MAX_SLOT_TRIES:
-                    raise FlowError("NO_SLOT", "slot tries exhausted",
-                                    "⚠️ چند نوبت پشت سر هم پذیرفته نشد؛ کمی بعد دوباره امتحان کنید.")
+                    raise FlowError("NO_SLOT", "slot tries exhausted", _next_day_message(
+                        self._last_block_text, "⚠️ چند نوبت پشت سر هم پذیرفته نشد."))
                 if await self._role_error():
                     # «هیچ سمتی ...» حین ثبت نوبت ← ظرفیت پر (دستور کارفرما)
                     await self._close_alert()
@@ -861,7 +922,8 @@ class Turn:
                 if rng and await self._handle_range_error(rng, target):
                     break                  # خطای بازه بعد از ثبت ناموفق ← روزهای بعدی
                 break                      # همه‌ی ساعت‌ها «تکمیل ظرفیت» بود ← روز بعد
-        raise FlowError("NO_SLOT", "no free slot", "⚠️ نوبت خالی پیدا نشد. کمی بعد دوباره امتحان کنید.")
+        raise FlowError("NO_SLOT", "no free slot",
+                        _next_day_message(self._last_block_text, "⚠️ نوبت خالی پیدا نشد."))
 
     async def go_home(self):
         """«صفحه اصلی» نوبت‌دهی (#btnHome) — بین نوبت‌های متوالی (ضبط steps:
@@ -937,7 +999,11 @@ async def work_turn(ctx, br, login, page, numbers: list[str], by: str, on_booked
                 raise
             await ctx.job.say(f"⚠️ نوبت {to_fa_digits(number)} ثبت نشد:\n{e.user_message or T.SITE_DOWN}")
             await ctx.report(e.category, f"turn {number}: {str(e)[:150]}")
+            ctx.error_category = None          # خطای همین شماره است؛ کار ادامه دارد
+            if e.category in config.TURN_REFUND_CATEGORIES:
+                ctx.sys_failed_numbers.append(number)
             failed.append(number)
+            ctx.done_numbers.append(number)
             continue
         await ctx.step("L11")
         await ctx.job.send_pdf(pdf, f"nobat_{number}.pdf",
@@ -945,6 +1011,8 @@ async def work_turn(ctx, br, login, page, numbers: list[str], by: str, on_booked
                                "لطفاً ۱۵ دقیقه قبل از نوبت با کارت ملی حاضر شوید.")
         ctx.new_items += 1
         booked.append(number)
+        ctx.booked_numbers.append(number)
+        ctx.done_numbers.append(number)
         if on_booked is not None:
             with contextlib.suppress(Exception):
                 await on_booked(number)

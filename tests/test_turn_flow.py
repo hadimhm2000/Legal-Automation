@@ -624,7 +624,8 @@ function pickDay(td){
 async function doCreate(){
   const r = await fetch('/Turn/CMSUnitTurnCreate', {method: 'POST'});
   if (r.ok) { location.hash = '#/Detail'; return; }
-  if (CAP_ON_CREATE) sweetH2('با عرض پوزش، ظرفیت نوبت دهی در زمان انتخاب شده تکمیل شده است.');
+  if (window.BOOKED_MSG) sweetH2(window.BOOKED_MSG);
+  else if (CAP_ON_CREATE) sweetH2('با عرض پوزش، ظرفیت نوبت دهی در زمان انتخاب شده تکمیل شده است.');
   else show('closeBtn');
 }
 function yesClick(){ hide('yesBtn'); }
@@ -1181,7 +1182,8 @@ async def test_work_turn_multi_books_each_number_and_goes_home(monkeypatch):
     async def report(cat, msg=""):
         steps.append(("ERR", cat))
 
-    ctx = types.SimpleNamespace(job=job, step=step, report=report, new_items=0, run_id=1)
+    ctx = types.SimpleNamespace(job=job, step=step, report=report, new_items=0, run_id=1, error_category=None,
+                               booked_numbers=[], done_numbers=[], sys_failed_numbers=[])
 
     async def on_booked(number):
         booked_cb.append(number)
@@ -1222,8 +1224,73 @@ async def test_work_turn_single_failure_reraises(monkeypatch):
     async def report(cat, msg=""):
         pass
 
-    ctx = types.SimpleNamespace(job=job, step=step, report=report, new_items=0, run_id=1)
+    ctx = types.SimpleNamespace(job=job, step=step, report=report, new_items=0, run_id=1, error_category=None,
+                               booked_numbers=[], done_numbers=[], sys_failed_numbers=[])
     with pytest.raises(FlowError) as ei:
         await turnmod.work_turn(ctx, None, None, None, ["111"], "archive")
     assert ei.value.category == "NO_SLOT"
     assert job.pdfs == []
+
+
+BOOKED_TXT = "برای این پرونده به تاریخ 1405/09/04 نوبت گرفته شده است. در صورت نیاز نوبت قبلی باطل شود"
+
+
+async def test_mds_already_booked_alert_stops_and_sends_site_text(fake_today):
+    """«برای این پرونده به تاریخ ... نوبت گرفته شده است...» ← متن خطا برای کاربر،
+    روند متوقف (ساعت/روز بعدی امتحان نمی‌شود) — دستور کارفرما."""
+    cands = turn_candidate_days(6)
+    cfg = {_day_key(cands[0]): {"times": [{"time": "08:30", "full": False},
+                                          {"time": "09:02", "full": False}]},
+           _day_key(cands[1]): {"times": [{"time": "10:15", "full": False}]}}
+    site = MdsTurnSite(cfg, fail_first_create=5)
+    br = await _open(site)
+    try:
+        await br.page.evaluate("t => { window.BOOKED_MSG = t; }", BOOKED_TXT)
+        t, _ = make_turn(br, br.page)
+        with pytest.raises(FlowError) as ei:
+            await t.book()
+    finally:
+        await br.close()
+    assert ei.value.category == "TURN_ALREADY_BOOKED"
+    assert "1405/09/04" in ei.value.user_message and "نوبت قبلی باطل شود" in ei.value.user_message
+    assert site.create_count == 1                # فقط یک تلاش؛ متوقف شد
+
+
+def test_next_day_message_includes_site_text_and_next_day_sentence():
+    txt = "با عرض پوزش، ظرفیت نوبت دهی در زمان انتخاب شده تکمیل شده است."
+    m = turnmod._next_day_message(txt, "x")
+    assert txt in m and "روز بعد درخواست نوبت خود را ثبت بفرمائید" in m
+    m2 = turnmod._next_day_message("", "⚠️ نوبت خالی پیدا نشد.")
+    assert "روز بعد درخواست نوبت خود را ثبت بفرمائید" in m2
+
+
+BOOKED_TXT = "برای این پرونده به تاریخ 1405/09/04 نوبت گرفته شده است. در صورت نیاز نوبت قبلی باطل شود"
+
+
+async def test_mds_already_booked_alert_stops_and_sends_site_text(fake_today):
+    """«برای این پرونده به تاریخ ... نوبت گرفته شده است...» ← متن خطا برای کاربر،
+    روند متوقف (ساعت/روز بعدی امتحان نمی‌شود) — دستور کارفرما."""
+    cands = turn_candidate_days(6)
+    cfg = {_day_key(cands[0]): {"times": [{"time": "08:30", "full": False},
+                                          {"time": "09:02", "full": False}]},
+           _day_key(cands[1]): {"times": [{"time": "10:15", "full": False}]}}
+    site = MdsTurnSite(cfg, fail_first_create=5)
+    br = await _open(site)
+    try:
+        await br.page.evaluate("t => { window.BOOKED_MSG = t; }", BOOKED_TXT)
+        t, _ = make_turn(br, br.page)
+        with pytest.raises(FlowError) as ei:
+            await t.book()
+    finally:
+        await br.close()
+    assert ei.value.category == "TURN_ALREADY_BOOKED"
+    assert "1405/09/04" in ei.value.user_message and "نوبت قبلی باطل شود" in ei.value.user_message
+    assert site.create_count == 1                # فقط یک تلاش؛ متوقف شد
+
+
+def test_next_day_message_includes_site_text_and_next_day_sentence():
+    txt = "با عرض پوزش، ظرفیت نوبت دهی در زمان انتخاب شده تکمیل شده است."
+    m = turnmod._next_day_message(txt, "x")
+    assert txt in m and "روز بعد درخواست نوبت خود را ثبت بفرمائید" in m
+    m2 = turnmod._next_day_message("", "⚠️ نوبت خالی پیدا نشد.")
+    assert "روز بعد درخواست نوبت خود را ثبت بفرمائید" in m2

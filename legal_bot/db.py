@@ -164,6 +164,21 @@ CREATE TABLE IF NOT EXISTS error_events (
     message TEXT,
     created_at TEXT
 );
+CREATE TABLE IF NOT EXISTS wallets (
+    bale_id INTEGER PRIMARY KEY,
+    balance_toman INTEGER NOT NULL DEFAULT 0 CHECK(balance_toman >= 0),
+    updated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS wallet_tx (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bale_id INTEGER,
+    delta_toman INTEGER,
+    kind TEXT,             -- refund | invoice_use | invoice_release
+    ref TEXT,              -- کد فاکتور
+    note TEXT,
+    created_at TEXT,
+    UNIQUE(kind, ref)
+);
 CREATE TABLE IF NOT EXISTS beta_allow (bale_id INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 """
@@ -195,6 +210,7 @@ _SUB_COLS = {
 _INV_COLS = {
     "plan": "TEXT", "cycle": "TEXT", "shortfall_toman": "INTEGER",
     "shortfall_receipt_file_id": "TEXT", "shortfall_receipt_file_unique_id": "TEXT",
+    "wallet_used": "INTEGER DEFAULT 0",       # مبلغ کسرشده از کیف پول برای این فاکتور
 }
 
 

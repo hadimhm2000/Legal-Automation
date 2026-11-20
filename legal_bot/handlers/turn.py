@@ -6,10 +6,10 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 
 from .. import config, keyboards as K, texts as T
-from ..services import subscription as sub, turn
+from ..services import subscription as sub, turn, wallet
 from ..services.flow import RunCtx, run_with_browser
 from ..services.session import Job, JobCancelled, UserTimeout, jobs
-from ..utils import (to_en_digits, to_fa_digits, validate_archive_number, validate_case_number)
+from ..utils import (fmt_toman, to_en_digits, to_fa_digits, validate_archive_number, validate_case_number)
 from .common import safe_answer, start_job
 from .payment import show_invoice
 
@@ -146,9 +146,46 @@ async def _new(m, db):
                 job.chat_id, "✅ ثبت نوبت برای شما رایگان است. برای شروع، دکمه‌ی زیر را بزنید.",
                 reply_markup=K.inline([[("▶️ شروع ثبت نوبت", f"turn:go:{inv['code']}")]]))
             return
+        # کیف پول: موجودی از مبلغ کل کسر می‌شود و فاکتور فقط برای مابقی صادر می‌شود
+        used = await wallet.use_for_invoice(db, inv)
+        if used:
+            inv = await db.one("SELECT * FROM invoices WHERE code=?", (inv["code"],))
+            left = await wallet.balance(db, job.user_id)
+            await job.say(T.WALLET_APPLIED.format(used=fmt_toman(used), left=fmt_toman(left)))
+            if int(inv["amount_toman"] or 0) <= 0:
+                await db.execute("UPDATE invoices SET status='approved', reviewed_by=?, reviewed_at=? "
+                                 "WHERE code=? AND status='pending'", (job.user_id, sub.now_iso(), inv["code"]))
+                await job.bot.send_message(
+                    job.chat_id, T.WALLET_ALL,
+                    reply_markup=K.inline([[("▶️ شروع ثبت نوبت", f"turn:go:{inv['code']}")]]))
+                return
         await show_invoice(job.bot, job.chat_id, inv)
 
     start_job(m, db, "turn_prepare", coro)
+
+
+async def _settle_system_failure(job: Job, db, ctx: RunCtx, code: str, numbers: list[str]) -> None:
+    """توقف به‌خاطر خطای شناسایی‌شده‌ی سامانه ← ٪TURN_FEE_PCT هزینه کسر و مابقی به کیف پول.
+
+    فقط خطاهای config.TURN_REFUND_CATEGORIES (خطای سامانه/ربات) — نه خطای کاربر
+    (شماره اشتباه، نوبت تکراری، لغو، مهلت پاسخ) و نه ظرفیت پر (پرداخت محفوظ می‌ماند)."""
+    failed = set(ctx.sys_failed_numbers)
+    if ctx.error_category in config.TURN_REFUND_CATEGORIES:
+        remaining = set(numbers) - set(ctx.done_numbers) - set(ctx.booked_numbers)
+        failed |= remaining
+    failed -= set(ctx.booked_numbers)
+    if not failed:
+        return
+    inv = await db.one("SELECT * FROM invoices WHERE code=?", (code,))
+    if not inv or inv["status"] not in ("approved", "used"):
+        return
+    res = await wallet.refund_failed(db, inv, len(failed))
+    if not res:
+        return
+    fee, back, bal = res
+    await db.execute("UPDATE invoices SET status='used' WHERE code=?", (code,))   # دیگر قابل استفاده‌ی مجدد نیست
+    await job.say(T.WALLET_REFUND.format(fee_pct=to_fa_digits(config.TURN_FEE_PCT), fee=fmt_toman(fee),
+                                         back=fmt_toman(back), bal=fmt_toman(bal)))
 
 
 @router.callback_query(F.data.startswith("turn:go:"))
@@ -188,6 +225,7 @@ async def go(cb: CallbackQuery, db):
             await turn.work_turn(ctx, br, login, page, numbers_final, by, on_booked=on_booked)
 
         await run_with_browser(ctx, "turn", w)
+        await _settle_system_failure(job, db, ctx, code, numbers_final)
         r = await db.one("SELECT status FROM invoices WHERE code=?", (code,))
         if r and r["status"] == "approved":
             await job.say("ℹ️ نوبت ثبت نشد؛ پرداخت شما محفوظ است و می‌توانید از «🗓 ثبت نوبت قضائی» دوباره امتحان کنید.")

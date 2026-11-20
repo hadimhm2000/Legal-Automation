@@ -10,7 +10,7 @@ import logging
 from .. import config, keyboards as K
 from ..db import parse_iso
 from ..utils import fa_date, now_tehran, to_fa_digits
-from . import reminders, subscription as sub
+from . import reminders, subscription as sub, wallet
 
 log = logging.getLogger(__name__)
 
@@ -126,7 +126,8 @@ async def subscription_tick(bot, db):
                     reply_markup=K.plans_kb())
             except Exception:
                 pass
-    # فاکتورهای منقضی
+    # فاکتورهای منقضی (سهم کیف پولِ فاکتورِ پرداخت‌نشده اول برمی‌گردد)
+    await wallet.release_expired(db)
     await db.execute("UPDATE invoices SET status='expired' WHERE status IN ('pending','shortfall_wait') "
                      "AND expires_at<?", (now.isoformat(),))
     # قاعده ۸: پاک‌سازی داده‌های کاربران قفل‌شده چند روز بعد از انقضا (نه ۳۰ روز)

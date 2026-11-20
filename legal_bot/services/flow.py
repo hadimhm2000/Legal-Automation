@@ -21,6 +21,10 @@ class RunCtx:
         self.run_id = None
         self.cur_step = "L01"
         self.new_items = 0
+        self.error_category: str | None = None   # دسته‌ی خطای پایان‌دهنده‌ی کار (برای استرداد کیف پول)
+        self.done_numbers: list[str] = []        # شماره‌هایی که پردازششان تمام شد (موفق یا ناموفق)
+        self.booked_numbers: list[str] = []      # نوبت‌های ثبت‌شده
+        self.sys_failed_numbers: list[str] = []  # شماره‌هایی که با خطای سامانه ثبت نشدند (چندنوبتی)
 
     async def start(self):
         self.run_id = await self.db.create_run(self.job.user_id, self.kind, self.trigger)
@@ -32,6 +36,7 @@ class RunCtx:
             await self.db.run_step(self.run_id, code)
 
     async def report(self, category, message=""):
+        self.error_category = category
         r = await self.db.one("SELECT steps_ok FROM check_runs WHERE id=?", (self.run_id,)) if self.run_id else None
         await error_reporter.report(self.bot, self.db, run_id=self.run_id, user_id=self.job.user_id,
                                     step=self.cur_step, category=category, message=message,
@@ -129,6 +134,8 @@ async def run_with_browser(ctx: RunCtx, target: str, work, *, consent=True):
         name = type(e).__name__
         if "aiogram" in mod or name.startswith("Telegram") or "telegram" in str(e).lower():
             cat = "SEND_FAILED"  # خطای ارسال به بله — سایت مقصر نیست
+        elif "playwright" in mod and name == "TimeoutError":
+            cat = "TIMEOUT"            # کلیک/انتظار طولانی‌شده؛ کرش مرورگر نیست
         elif "playwright" in mod:
             cat = "BROWSER_CRASH"
         else:
