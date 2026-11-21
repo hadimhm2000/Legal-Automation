@@ -1294,3 +1294,79 @@ def test_next_day_message_includes_site_text_and_next_day_sentence():
     assert txt in m and "روز بعد درخواست نوبت خود را ثبت بفرمائید" in m
     m2 = turnmod._next_day_message("", "⚠️ نوبت خالی پیدا نشد.")
     assert "روز بعد درخواست نوبت خود را ثبت بفرمائید" in m2
+
+
+# ── استعلام پرونده: صبر برای لودینگ، ریلود و تلاش دوباره (دستور کارفرما) ──────
+def _slow_html(delay_ms: int, *, never: bool = False) -> str:
+    """retrieve() بعد از delay_ms ردیف را نشان می‌دهد؛ تا آن موقع اسپینر دیده می‌شود."""
+    html = MY_CASES_HTML.replace("__CASES__", json.dumps(
+        [{"no": "140313920001478238", "arch": "0501667", "text": CASE_ROW_TEXT}], ensure_ascii=False))
+    html = html.replace("<table>", '<i id="sp" class="fa-spin hide">...</i><table>')
+    html = html.replace("function retrieve(){", (
+        "function retrieve(){ document.getElementById('sp').classList.remove('hide');"
+        f" if ({'true' if never else 'false'}) return;"
+        f" setTimeout(() => {{ document.getElementById('sp').classList.add('hide'); retrieve2(); }}, {delay_ms}); }}\n"
+        "function retrieve2(){"))
+    return html
+
+
+async def _open_html_counting(first_html: str, later_html: str):
+    docs = []
+
+    async def handle(route):
+        docs.append(1)
+        body = first_html if len(docs) == 1 else later_html
+        return await route.fulfill(body=body, content_type="text/html; charset=utf-8")
+
+    br = Browser()
+    await br.__aenter__()
+    await br.context.route("**/*", handle)
+    await br.page.goto("https://adliran.ir/Turn/Index#/Create")
+    return br, docs
+
+
+async def test_inquiry_waits_for_slow_result_and_continues_immediately(monkeypatch):
+    import time
+    monkeypatch.setattr(config, "TURN_INQUIRY_MIN_WAIT_MS", 8000)
+    monkeypatch.setattr(config, "TURN_INQUIRY_MAX_WAIT_MS", 12000)
+    br, docs = await _open_html_counting(_slow_html(2000), _slow_html(2000))
+    try:
+        t, _ = make_turn(br, br.page)
+        await br.page.get_by_text("اخذ نوبت بر اساس شماره پرونده").click()
+        t0 = time.monotonic()
+        rows = await t._inquire_case("140313920001478238", "case")
+        dt_s = time.monotonic() - t0
+    finally:
+        await br.close()
+    assert len(rows) == 1
+    assert 1.5 < dt_s < 5.5          # منتظر نتیجه ماند ولی تا ۸ ثانیه‌ی حداقل نخوابید
+    assert len(docs) == 1            # ریلود نشد
+
+
+async def test_inquiry_reloads_once_when_no_result_then_succeeds(monkeypatch):
+    monkeypatch.setattr(config, "TURN_INQUIRY_MIN_WAIT_MS", 1500)
+    monkeypatch.setattr(config, "TURN_INQUIRY_MAX_WAIT_MS", 2000)
+    br, docs = await _open_html_counting(_slow_html(0, never=True), _slow_html(300))
+    try:
+        t, _ = make_turn(br, br.page)
+        await br.page.get_by_text("اخذ نوبت بر اساس شماره پرونده").click()
+        rows = await t._inquire_case("140313920001478238", "case")
+    finally:
+        await br.close()
+    assert len(rows) == 1
+    assert len(docs) == 2            # یک بار ریلود شد
+
+
+async def test_inquiry_no_result_after_reload_raises_not_found(monkeypatch):
+    monkeypatch.setattr(config, "TURN_INQUIRY_MIN_WAIT_MS", 1000)
+    monkeypatch.setattr(config, "TURN_INQUIRY_MAX_WAIT_MS", 1500)
+    h = _slow_html(0, never=True).replace('<input id="txtCaseNo">', '<input id="txtCaseNo" class="hide">')
+    br, docs = await _open_html_counting(h, h)
+    try:
+        t, _ = make_turn(br, br.page)
+        with pytest.raises(FlowError) as ei:
+            await t.select_case("140313920001478238", "case")
+    finally:
+        await br.close()
+    assert ei.value.category == "TURN_CASE_NOT_FOUND"
+    assert len(docs) == 2            # دقیقاً یک ریلود (نه بیشتر)

@@ -223,3 +223,8 @@ TURN_REFUND_CATEGORIES = frozenset(
         "TURN_REFUND_CATEGORIES",
         "SANA_DOWN,TIMEOUT,BROWSER_CRASH,PARSE_CHANGED,LOGIN_UI_CHANGED,PRINT_FAILED,SITE_BUSY,SVC_DELAY,UNKNOWN"
     ).split(",") if x.strip())
+# استعلام پرونده در «فهرست پرونده های من»: حداقل انتظار برای نتیجه، سقف انتظار وقتی صفحه هنوز در حال لود است،
+# و تعداد ریلود+تلاش مجدد وقتی هیچ نتیجه‌ای ظاهر نشد. به‌محض ظاهر شدن نتیجه بلافاصله ادامه می‌دهد.
+TURN_INQUIRY_MIN_WAIT_MS = _int("TURN_INQUIRY_MIN_WAIT_MS", 15000)
+TURN_INQUIRY_MAX_WAIT_MS = _int("TURN_INQUIRY_MAX_WAIT_MS", 40000)
+TURN_INQUIRY_RELOADS = _int("TURN_INQUIRY_RELOADS", 1)

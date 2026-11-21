@@ -78,6 +78,19 @@ ROWS_JS = r"""
 }
 """
 
+# صفحه هنوز در حال لود است؟ (اسپینر یا دکمه‌ی disabledِ وابسته به viewModel.loading)
+LOADING_JS = r"""
+() => {
+  const vis = el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  const sp = document.querySelectorAll('.fa-spin, .glyphicon-refresh-animate, .spinner, .loading, .loader, '
+    + '.blockUI, .block-ui-main, .ng-busy, [class*="spinner"], [class*="loading-"]');
+  for (const e of sp) if (vis(e)) return true;
+  for (const e of document.querySelectorAll('[ng-disabled*="loading"]'))
+    if (vis(e) && (e.disabled || e.hasAttribute('disabled'))) return true;
+  return false;
+}
+"""
+
 # گزینه‌های منوی بازشده (ngMultiSelect / bootstrap dropdown / listbox / مودال)
 # متن کامل (تا ۳۰۰ نویسه) برمی‌گردد تا نام کامل دادورز برای کاربر نمایش داده شود.
 MENU_JS = r"""
@@ -460,6 +473,82 @@ class Turn:
         idx = await self.job.ask_choice("\n".join(lines), opts, grid=4)
         return next(it for it in shown if it["idx"] == idx)
 
+    # ── استعلام پرونده در «فهرست پرونده های من» (دستور کارفرما) ───────────
+    async def _page_loading(self) -> bool:
+        """آیا صفحه هنوز در حال لود است؟ (اسپینر/لودینگ یا دکمه‌ی disabled با viewModel.loading)"""
+        try:
+            return bool(await self.page.evaluate(LOADING_JS))
+        except Exception:
+            return False
+
+    async def _wait_not_loading(self, timeout_ms: int = 10_000) -> None:
+        """تا پایان لودینگ صبر می‌کند؛ اگر لودینگی نبود بلافاصله برمی‌گردد."""
+        loop = asyncio.get_running_loop()
+        end = loop.time() + timeout_ms / 1000
+        while loop.time() < end and await self._page_loading():
+            await asyncio.sleep(0.2)
+
+    async def _wait_inquiry_result(self, nums: list[str]) -> tuple[list[dict], str]:
+        """منتظر نتیجه‌ی استعلام: ردیف‌های پرونده یا sweet-alert «یافت نشد».
+
+        حداقل TURN_INQUIRY_MIN_WAIT_MS صبر می‌کند (اگر صفحه هنوز لودینگ دارد تا
+        TURN_INQUIRY_MAX_WAIT_MS)، ولی به‌محض ظاهر شدن نتیجه بلافاصله برمی‌گردد.
+        خروجی: (ردیف‌ها, متن هشدار «یافت نشد») — هر دو خالی یعنی نتیجه‌ای نیامد."""
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        soft = start + config.TURN_INQUIRY_MIN_WAIT_MS / 1000
+        hard = start + max(config.TURN_INQUIRY_MAX_WAIT_MS, config.TURN_INQUIRY_MIN_WAIT_MS) / 1000
+        while True:
+            rows = await self.page.evaluate(ROWS_JS, nums)
+            if rows:
+                return rows, ""
+            nf = await self._case_not_found_alert()
+            if nf:
+                return [], nf
+            now = loop.time()
+            if now >= hard or (now >= soft and not await self._page_loading()):
+                return [], ""
+            await asyncio.sleep(0.25)
+
+    async def _inquire_case_once(self, number: str, by: str, nums: list[str]) -> tuple[list[dict], str]:
+        await self.page.locator(S.TURN_MY_CASES).first.click()
+        await self._wait_not_loading(10_000)
+        field = S.TURN_MY_CASES_SEARCH if by == "case" else S.TURN_ARCHIVE_SEARCH
+        box = self.page.locator(field).first
+        if await visible(box, timeout=8000):
+            await self._wait_not_loading(5_000)
+            await box.click()
+            await box.fill(to_en_digits(number))
+        if not await click_text(self.page, *S.TURN_MY_CASES_GO, timeout=8000):
+            raise FlowError("PARSE_CHANGED", "turn: retrieve-cases button not found")
+        return await self._wait_inquiry_result(nums)
+
+    async def _inquire_case(self, number: str, by: str) -> list[dict]:
+        """استعلام با صبر برای لودینگ؛ اگر نتیجه‌ای ظاهر نشد، صفحه یک‌بار ریلود و دوباره
+        استعلام می‌شود (TURN_INQUIRY_RELOADS). هشدار «پرونده‌ای یافت نشد» پاسخِ قطعیِ
+        سامانه است ← بدون ریلود، روند متوقف می‌شود."""
+        nums = sorted({number, (number or "").lstrip("0")} - {""})
+        for attempt in range(config.TURN_INQUIRY_RELOADS + 1):
+            if attempt:
+                log.warning("turn: no inquiry result after %sms — reloading (attempt %s)",
+                            config.TURN_INQUIRY_MIN_WAIT_MS, attempt + 1)
+                await self.page.reload(wait_until="domcontentloaded")
+                await self._wait_not_loading(15_000)
+                await human_pause(self.page, 800)
+                if not await click_text(self.page, *S.TURN_BY_CASE, timeout=15_000):
+                    break
+                await self._wait_not_loading(10_000)
+                if not await visible(self.page.locator(S.TURN_MY_CASES), timeout=8000):
+                    break
+            rows, nf = await self._inquire_case_once(number, by, nums)
+            if rows:
+                return rows
+            if nf:
+                await self._close_alert()
+                raise FlowError("TURN_CASE_NOT_FOUND", f"turn: case not found: {nf[:150]}",
+                                T.TURN_CASE_NOT_FOUND)
+        return []
+
     # ── مراحل ──
     async def select_case(self, number: str, by: str):
         """جستجوی پرونده در «فهرست پرونده های من» (ضبط steps — دستور کارفرما):
@@ -475,28 +564,7 @@ class Turn:
         await human_pause(self.page, 2000)
         rows = []
         if await visible(self.page.locator(S.TURN_MY_CASES), timeout=8000):
-            await self.page.locator(S.TURN_MY_CASES).first.click()
-            await human_pause(self.page, 1500)
-            # جستجو با شماره پرونده (#txtCaseNoSearch) یا شماره بایگانی شعبه
-            # (#txtArchiveNoSearch) — هر دو صورتِ شماره (با/بدون صفرِ ابتدایی) می‌گردد.
-            field = S.TURN_MY_CASES_SEARCH if by == "case" else S.TURN_ARCHIVE_SEARCH
-            box = self.page.locator(field).first
-            if await visible(box, timeout=5000):
-                await box.fill(to_en_digits(number))
-            if not await click_text(self.page, *S.TURN_MY_CASES_GO, timeout=6000):
-                raise FlowError("PARSE_CHANGED", "turn: retrieve-cases button not found")
-            await human_pause(self.page, 3000)
-            nums = {number, (number or "").lstrip("0")} - {""}
-            rows = await self.page.evaluate(ROWS_JS, sorted(nums))
-            if not rows:
-                # دستور کارفرما: sweet-alert «هیچ پرونده ای با شماره «...» یافت نشد»
-                # بعد از استعلام ← روند متوقف شود: اسم کاربر در پرونده نیست یا
-                # شماره پرونده اشتباه است (ادامه‌ی خودکار با شماره‌ی غلط ممنوع).
-                nf = await self._case_not_found_alert()
-                await self._close_alert()
-                if nf:
-                    raise FlowError("TURN_CASE_NOT_FOUND", f"turn: case not found: {nf[:150]}",
-                                    T.TURN_CASE_NOT_FOUND)
+            rows = await self._inquire_case(number, by)
         if rows:
             if by == "case":
                 ex = [r for r in rows if is_execution_branch(r["text"])]
