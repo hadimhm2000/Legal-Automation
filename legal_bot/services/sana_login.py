@@ -29,6 +29,7 @@ import time
 from playwright.async_api import Page
 
 from .. import config, texts as T
+from ..utils import to_en_digits
 from ..utils import clean_digits, mask_national_code, normalize_fa, valid_national_code
 from . import selectors as S
 from .browser import click_text, human_ms, human_pause, page_text, text_re, visible, wait_first, wait_ready
@@ -234,7 +235,7 @@ class SanaLogin:
         # تاخیر هر نویسه تصادفی است (انسان با سرعت ثابت تایپ نمی‌کند)
         await el.click()
         await el.fill("")
-        await el.press_sequentially(value, delay=human_ms(config.TYPE_DELAY_MS))
+        await el.press_sequentially(to_en_digits(value), delay=human_ms(config.TYPE_DELAY_MS))
         value = None
         await human_pause(page)
 
@@ -243,7 +244,7 @@ class SanaLogin:
         el = page.locator(selector).first
         await el.click()
         await el.fill("")
-        await el.press_sequentially(text, delay=human_ms(config.TYPE_DELAY_MS))
+        await el.press_sequentially(to_en_digits(text), delay=human_ms(config.TYPE_DELAY_MS))
         await human_pause(page)
 
     async def _submit(self, page, field, api) -> tuple[int | None, str]:

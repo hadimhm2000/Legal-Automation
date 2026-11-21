@@ -6,7 +6,6 @@ from aiogram.types import Message
 
 from .. import config
 from ..utils import to_en_digits
-from ..utils import to_en_digits
 
 router = Router(name="admin")
 router.message.filter(F.from_user.id == config.ADMIN_ID if config.ADMIN_ID else F.from_user.id == -1)

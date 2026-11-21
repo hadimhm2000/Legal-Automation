@@ -18,6 +18,7 @@ from aiogram import Bot
 from aiogram.types import BufferedInputFile, Message
 
 from .. import config, keyboards as K, texts as T
+from ..utils import to_en_digits
 
 log = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ class SecretVault:
         self._data: dict[tuple[int, str], dict[str, str]] = {}
 
     def put(self, owner: tuple[int, str], name: str, value: str):
-        self._data.setdefault(owner, {})[name] = value
+        self._data.setdefault(owner, {})[name] = to_en_digits(value)
 
     def get(self, owner, name):
         return self._data.get(owner, {}).get(name)
@@ -262,7 +263,7 @@ class Job:
         e = self._expect
         if not e or not e.accept_text or e.future.done():
             return False
-        e.future.set_result(("text", text))
+        e.future.set_result(("text", to_en_digits(text)))
         return True
 
     def deliver_callback(self, seq: int, idx: int) -> bool:

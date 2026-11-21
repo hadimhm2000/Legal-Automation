@@ -47,6 +47,7 @@ from playwright.async_api import Page
 
 from .. import config
 from .. import texts as T
+from ..utils import to_en_digits
 from ..utils import (fa_date, jalali_of, normalize_fa, parse_jalali, parse_jalali_header, to_fa_digits,
                      turn_candidate_days, weekday_fa)
 from . import selectors as S
@@ -481,7 +482,7 @@ class Turn:
             field = S.TURN_MY_CASES_SEARCH if by == "case" else S.TURN_ARCHIVE_SEARCH
             box = self.page.locator(field).first
             if await visible(box, timeout=5000):
-                await box.fill(number)
+                await box.fill(to_en_digits(number))
             if not await click_text(self.page, *S.TURN_MY_CASES_GO, timeout=6000):
                 raise FlowError("PARSE_CHANGED", "turn: retrieve-cases button not found")
             await human_pause(self.page, 3000)
@@ -524,7 +525,7 @@ class Turn:
         elif by == "case" and await visible(self.page.locator(S.TURN_CASE_INPUT)):
             el = self.page.locator(S.TURN_CASE_INPUT).first
             await el.click()
-            await el.fill(number)
+            await el.fill(to_en_digits(number))
         else:
             # هیچ نتیجه‌ای از استعلام نیامد (نه ردیف، نه هشدار) — همان پیام
             # «اسم شما در پرونده نیست...» (دستور کارفرما)

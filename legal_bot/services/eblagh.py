@@ -37,6 +37,7 @@ from playwright.async_api import Page
 
 from .. import config, keyboards as K
 from .. import texts as T
+from ..utils import to_en_digits
 from ..utils import fa_date, normalize_fa, to_fa_digits, to_jalali_str, today_tehran
 from . import selectors as S
 from .browser import SET_INPUT_JS, click_text, human_pause, page_text, pdf_of, text_re, visible, wait_first
@@ -481,7 +482,7 @@ class Eblagh:
                 raise FlowError("PARSE_CHANGED", f"search input not found ({css})")
         el = loc.first
         await el.click()
-        await el.fill(value)
+        await el.fill(to_en_digits(value))
         await human_pause(self.page, 400)
 
     async def _click_search_go(self) -> bool:
@@ -960,7 +961,7 @@ async def _set_range(e: Eblagh, start: dt.date, end: dt.date):
             raise FlowError("PARSE_CHANGED", f"date input {sel} not found")
         with contextlib.suppress(Exception):
             await el.click()
-            await el.fill(val)
+            await el.fill(to_en_digits(val))
         if (await el.input_value()) != val:
             await e.page.evaluate(SET_INPUT_JS, [sel, val])
         await e.page.keyboard.press("Escape")

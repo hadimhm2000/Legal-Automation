@@ -28,6 +28,7 @@ import re
 from playwright.async_api import Page
 
 from .. import config, texts as T
+from ..utils import to_en_digits
 from ..utils import (fa_date, normalize_fa, parse_jalali, subtract_ranges, to_fa_digits,
                      to_jalali_str, year_windows)
 from . import selectors as S
@@ -215,7 +216,7 @@ class ResultCase:
             if not await self._wait_enabled(box, timeout_ms=15_000):
                 raise _SvcDelay()
             await box.click()
-            await box.fill(case_no)
+            await box.fill(to_en_digits(case_no))
         if date_from is not None:
             await self._set_date(S.RC_DATE_FROM, date_from)
         if date_to is not None:
@@ -423,7 +424,7 @@ class ResultCase:
             raise _SvcDelay()
         with contextlib.suppress(Exception):
             await el.click()
-            await el.fill(val)
+            await el.fill(to_en_digits(val))
         try:
             got = await el.input_value()
         except Exception:

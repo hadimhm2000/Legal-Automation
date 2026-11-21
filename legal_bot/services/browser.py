@@ -397,7 +397,8 @@ SET_INPUT_JS = r"""
   const el = document.querySelector(sel);
   if (!el) return false;
   el.removeAttribute('readonly');
-  el.value = value;
+  const fa = '۰۱۲۳۴۵۶۷۸۹', ar = '٠١٢٣٤٥٦٧٨٩';
+  el.value = String(value).replace(/[۰-۹٠-٩]/g, c => String(fa.indexOf(c) >= 0 ? fa.indexOf(c) : ar.indexOf(c)));
   for (const t of ['input', 'change', 'blur']) el.dispatchEvent(new Event(t, {bubbles: true}));
   try { if (window.angular) window.angular.element(el).triggerHandler('input'); } catch (e) {}
   return true;
