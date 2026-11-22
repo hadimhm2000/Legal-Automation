@@ -15,7 +15,7 @@ from ..db import now_iso, parse_iso
 from ..services import subscription as sub
 from ..utils import fa_date, fmt_toman, to_fa_digits
 from .common import safe_answer, show_plans
-from .payment import show_invoice
+from .payment import offer_payment
 
 router = Router(name="plans")
 
@@ -208,7 +208,7 @@ async def _do_invoice(cb, db, data: str):
             return
     inv = await sub.create_invoice(db, cb.from_user.id, kind, plan, cycle,
                                    is_admin=cb.from_user.id == config.ADMIN_ID)
-    await show_invoice(cb.bot, cb.message.chat.id, inv)
+    await offer_payment(cb.bot, db, cb.message.chat.id, inv)
 
 
 @router.callback_query(F.data.startswith("inv:"))

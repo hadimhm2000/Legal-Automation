@@ -112,7 +112,8 @@ def start_job(message_or_cb, db, kind: str, coro) -> bool:
     """coro(job) را به‌عنوان تنها کار فعال کاربر اجرا می‌کند."""
     u = message_or_cb.from_user
     chat_id = message_or_cb.chat.id if isinstance(message_or_cb, Message) else message_or_cb.message.chat.id
-    job = Job(bot=message_or_cb.bot, user_id=u.id, chat_id=chat_id, kind=kind)
+    job = Job(bot=message_or_cb.bot, user_id=u.id, chat_id=chat_id, kind=kind,
+              user_name=getattr(u, "full_name", "") or "")
     return jobs.start(job, coro)
 
 

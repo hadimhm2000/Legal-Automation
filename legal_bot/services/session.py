@@ -101,6 +101,7 @@ class Job:
     kind: str
     id: str = field(default_factory=lambda: _secrets.token_hex(3))
     run_id: int | None = None
+    user_name: str = ""                     # نام کاربر برای گزارش خطای دقیق به مدیر
     task: asyncio.Task | None = None
     _seq: int = 0
     _expect: _Expect | None = None

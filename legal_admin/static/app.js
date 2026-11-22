@@ -4,7 +4,7 @@
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 const API = "/api";
-let page = { users: 1, invoices: 1, runs: 1, errors: 1, notices: 1, cases: 1 };
+let page = { users: 1, invoices: 1, runs: 1, errors: 1, notices: 1, cases: 1, support: 1 };
 let curSec = "dashboard";
 
 /* ── کمکی ── */
@@ -66,7 +66,8 @@ const SECS = {
   dashboard: ["داشبورد", "نمای کلی ربات در یک نگاه"], users: ["کاربران", "جستجو، پلن و محدودسازی"],
   invoices: ["فاکتورها", "تأیید / رد / کسری رسید کارت‌به‌کارت"], runs: ["بررسی‌ها", "لاگ اجرای استعلام‌ها"],
   errors: ["خطاها", "رویدادهای خطای ربات"], notices: ["ابلاغیه‌ها", "آخرین ابلاغیه‌های ثبت‌شده"],
-  cases: ["پرونده‌های پیگیری", "پیگیری خودکار تغییرات"], broadcast: ["پیام همگانی", "ارسال از طریق بله"],
+  cases: ["پرونده‌های پیگیری", "پیگیری خودکار تغییرات"], support: ["پشتیبانی", "گفتگوی کاربر ↔ مدیر (پیش‌نویس + تایید)"],
+  broadcast: ["پیام همگانی", "ارسال از طریق بله"],
   beta: ["فهرست بتا", "دسترسی تست پیش از انتشار"], settings: ["تنظیمات", "پارامترهای فعال ربات"],
 };
 function go(hash) {
@@ -98,6 +99,7 @@ async function load(sec) {
     else if (sec === "errors") await loadErrors();
     else if (sec === "notices") await loadNotices();
     else if (sec === "cases") await loadCases();
+    else if (sec === "support") await loadSupport();
     else if (sec === "broadcast") loadSys();
     else if (sec === "beta") await loadBeta();
     else if (sec === "settings") await loadSettings();
@@ -186,9 +188,9 @@ async function loadInvoices() {
       <td class="num">${esc(i.code)}</td>
       <td>${esc(i.first_name || "")} <span class="num">(${i.bale_id})</span></td>
       <td>${esc(KIND_FA[i.kind] || i.kind)}</td>
-      <td class="num">${fa(i.amount_toman)}</td>
+      <td class="num">${fa(i.amount_toman)}${i.wallet_used ? "<br><small>(+ کیف پول " + fa(i.wallet_used) + ")</small>" : ""}</td>
       <td>${i.plan ? tag(PLAN_FA[i.plan] || i.plan, "info") + " " + (i.cycle === "quarterly" ? "(۳ ماهه)" : "") : "—"}</td>
-      <td>${tag(stt, stc)}${i.shortfall_toman ? "<br><small>کسری: " + fa(i.shortfall_toman) + "</small>" : ""}</td>
+      <td>${tag(stt, stc)}${i.shortfall_toman ? "<br><small>کسری: " + fa(i.shortfall_toman) + "</small>" : ""}${i.wallet_used ? "<br><small>کیف پول: " + fa(i.wallet_used) + "</small>" : ""}</td>
       <td class="num">${i.created_at_fa || "—"}</td>
       <td class="num">${i.expires_at_fa || "—"}</td>
       <td class="actions">${actionable ? `
@@ -254,6 +256,22 @@ async function loadCases() {
     <td class="num">${c.last_change_fa || "—"}</td>
     <td class="num">${c.last_checked_fa || "—"}</td></tr>`).join("") || `<tr><td colspan="5" class="empty">پرونده‌ای پیگیری نمی‌شود.</td></tr>`;
   pagerInfo("casePageInfo", d.total, page.cases, 30);
+}
+
+/* ── پشتیبانی ── */
+async function loadSupport() {
+  const q = $("#supSearch").value.trim();
+  const d = await api(`/support?page=${page.support}&q=${encodeURIComponent(q)}`);
+  $("#supTable tbody").innerHTML = d.rows.map(m => `<tr>
+    <td class="num">${m.id}</td>
+    <td>${esc(m.first_name || "")} <span class="num">(${m.bale_id})</span></td>
+    <td>${m.sender === "admin" ? tag("مدیر", "info") : tag("کاربر", "")}</td>
+    <td style="white-space:normal;min-width:280px">${esc((m.body || "(بدون متن)").slice(0, 220))}</td>
+    <td class="num">${m.files_count ? "📎 " + fa(m.files_count) : "—"}</td>
+    <td class="num">${m.created_at_fa || "—"}</td>
+    <td class="actions"><button class="btn" data-act="user" data-id="${m.bale_id}">کاربر</button></td></tr>`)
+    .join("") || `<tr><td colspan="7" class="empty">پیام پشتیبانی‌ای ثبت نشده.</td></tr>`;
+  pagerInfo("supPageInfo", d.total, page.support, 30);
 }
 
 /* ── بتا ── */
@@ -331,6 +349,9 @@ document.addEventListener("click", async (e) => {
   if (act === "notice-next") return step("notices", 1);
   if (act === "case-prev") return step("cases", -1);
   if (act === "case-next") return step("cases", 1);
+  if (act === "sup-prev") return step("support", -1);
+  if (act === "sup-next") return step("support", 1);
+  if (act === "search-support") { page.support = 1; return loadSupport(); }
   if (act === "search-users") { page.users = 1; return loadUsers(); }
   if (act === "search-inv") { page.invoices = 1; return loadInvoices(); }
   if (act === "search-runs") { page.runs = 1; return loadRuns(); }
@@ -394,6 +415,7 @@ document.addEventListener("keydown", (e) => {
   if (e.target === $("#userSearch")) { page.users = 1; loadUsers(); }
   if (e.target === $("#invSearch")) { page.invoices = 1; loadInvoices(); }
   if (e.target === $("#noticeSearch")) { page.notices = 1; loadNotices(); }
+  if (e.target === $("#supSearch")) { page.support = 1; loadSupport(); }
 });
 ["userPlan", "userStatus"].forEach(id => $("#" + id).addEventListener("change", () => { page.users = 1; loadUsers(); }));
 $("#invStatus").addEventListener("change", () => { page.invoices = 1; loadInvoices(); });

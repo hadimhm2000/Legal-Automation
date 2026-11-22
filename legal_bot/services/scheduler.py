@@ -137,6 +137,25 @@ async def subscription_tick(bot, db):
 
 
 _tasks: set = set()
+_last_card_tick: float = 0.0
+
+
+async def _card_fallback_tick(bot, db):
+    """فعال‌سازی خودکار کارت‌به‌کارت برای فاکتورهای پرداخت‌نشده‌ی درگاهی
+    (الگوی ربات اصلی — پس از PAY_CARD_FALLBACK_MINUTES دقیقه؛ پیش‌فرض ۱۰)."""
+    global _last_card_tick
+    import time
+
+    now = time.monotonic()
+    if now - _last_card_tick < max(10, config.PAY_CARD_FALLBACK_POLL_SEC):
+        return
+    _last_card_tick = now
+    try:
+        from ..handlers.payment import card_fallback_tick
+
+        await card_fallback_tick(bot, db)
+    except Exception:
+        log.exception("card fallback tick failed")
 
 
 def _background(coro, name):
@@ -168,6 +187,8 @@ async def run(bot, db, stop: asyncio.Event):
                 await db.execute("DELETE FROM settings WHERE key LIKE 'sched:%' AND key NOT LIKE ?", (f"%{day}%",))
             if await _once(db, f"sched:sub:{day}:{now.hour}"):
                 await subscription_tick(bot, db)
+            # کارت‌به‌کارت خودکار برای فاکتورهای درگاهیِ پرداخت‌نشده (هر پول‌ثانیه)
+            await _card_fallback_tick(bot, db)
         except Exception:
             log.exception("scheduler tick failed")
         try:

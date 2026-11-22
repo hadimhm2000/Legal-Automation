@@ -133,6 +133,9 @@ class SanaLogin:
     async def run(self) -> Page:
         for _ in range(3):
             page = await self.enter_portal()
+            # صفحه‌ی فعال در ctx ثبت می‌شود تا خطای هر مرحله‌ی ورود، اسکرین‌شاتِ
+            # همان لحظه را برای مدیر داشته باشد (دستور کارفرما — گزارش خطا).
+            self.ctx.page = page
             try:
                 await self.login(page)
                 return page

@@ -89,6 +89,14 @@ PLAN_ORG_DAILY_CAP = _int("PLAN_ORG_DAILY_CAP", 50)      # قاعده ۴: سقف
 
 RECEIPT_ARM_SECONDS = _int("RECEIPT_ARM_SECONDS", 900)   # اعتبار دکمه‌ی «ارسال تصویر رسید» (۱۵ دقیقه)
 PRICE_TURN = _int("PRICE_TURN", 70_000)  # هر درخواست ثبت نوبت قضائی
+
+# -- payment (main-bot pattern): invoice -> Bale gateway -> auto card fallback --
+BALE_WALLET_TOKEN = os.environ.get("BALE_WALLET_TOKEN", "")
+PAY_CARD_FALLBACK_MINUTES = _int("PAY_CARD_FALLBACK_MINUTES", 10)
+PAY_CARD_FALLBACK_POLL_SEC = _int("PAY_CARD_FALLBACK_POLL_SEC", 30)
+
+# -- error report to admin: step + reason + screenshot --
+ERROR_SHOT_TO_ADMIN = os.environ.get("ERROR_SHOT_TO_ADMIN", "1") != "0"
 SUB_DAYS = _int("SUB_DAYS", 30)          # دوره‌ی ماهانه
 QUARTERLY_DAYS = _int("QUARTERLY_DAYS", 90)  # دوره‌ی ۳ ماهه
 SUB_GRACE_DAYS = _int("SUB_GRACE_DAYS", 7)    # قاعده ۸: نگه‌داشتن پرونده‌ها چند روز بعد از انقضا

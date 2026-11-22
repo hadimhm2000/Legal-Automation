@@ -259,11 +259,14 @@ async def stats(request: Request):
         "WHERE status IN ('FREE_ACTIVE','PAID_ACTIVE') GROUP BY plan")
     pending_inv = (await d.one(
         "SELECT COUNT(*) c FROM invoices WHERE status IN ('pending','receipt_sent','shortfall_wait')"))["c"]
+    # «used» یعنی پرداخت‌شده و مصرف‌شده (مثل نوبت ثبت‌شده) — درآمد است و باید شمرده شود
+    # (اصلاحیه: پرداخت نوبتِ امروزِ کاربر در پنل دیده نمی‌شد چون فقط approved شمرده می‌شد)
     revenue = (await d.one(
-        "SELECT COALESCE(SUM(amount_toman),0) s FROM invoices WHERE status='approved' "
-        "AND created_at>=?", (since7,)))["s"]
+        "SELECT COALESCE(SUM(amount_toman + COALESCE(wallet_used,0)),0) s FROM invoices "
+        "WHERE status IN ('approved','used') AND created_at>=?", (since7,)))["s"]
     approved_inv = (await d.one(
-        "SELECT COUNT(*) c FROM invoices WHERE status='approved' AND created_at>=?", (since7,)))["c"]
+        "SELECT COUNT(*) c FROM invoices WHERE status IN ('approved','used') AND created_at>=?",
+        (since7,)))["c"]
     runs24 = (await d.one("SELECT COUNT(*) c FROM check_runs WHERE started_at>=?", (since24,)))["c"]
     errors24 = (await d.one("SELECT COUNT(*) c FROM error_events WHERE created_at>=?", (since24,)))["c"]
     restricted = (await d.one(
@@ -448,7 +451,9 @@ async def invoices_list(request: Request, status: str = "", q: str = "", page: i
         where.append("i.status=?")
         params.append(status)
     else:
-        where.append("i.status NOT IN ('expired','used')")
+        # «used» (پرداخت‌شده و مصرف‌شده — مثل نوبت ثبت‌شده) باید در فهرست بماند؛
+        # فقط فاکتورهای منقضی پیش‌فرض مخفی‌اند و از فیلتر قابل مشاهده‌اند.
+        where.append("i.status NOT IN ('expired')")
     if q.strip():
         like = _like(q)
         cond = "(i.code LIKE ? ESCAPE '\\' OR CAST(i.bale_id AS TEXT) LIKE ? ESCAPE '\\' OR u.first_name LIKE ? ESCAPE '\\')"
@@ -462,6 +467,7 @@ async def invoices_list(request: Request, status: str = "", q: str = "", page: i
     rows = await d.all(
         f"SELECT i.id, i.code, i.bale_id, i.kind, i.amount_toman, i.status, i.plan, i.cycle, "
         f"i.payload, i.created_at, i.expires_at, i.reviewed_at, i.reject_reason, i.shortfall_toman, "
+        f"COALESCE(i.wallet_used,0) wallet_used, i.gateway_sent_at, i.card_sent_at, "
         f"u.first_name FROM invoices i LEFT JOIN users u ON u.bale_id=i.bale_id {w} "
         f"ORDER BY i.id DESC LIMIT ? OFFSET ?", tuple(params + [limit, offset]))
     return {"total": total, "rows": _row_fa(rows, "created_at", "expires_at", "reviewed_at")}
@@ -616,6 +622,48 @@ async def cases_list(request: Request, page: int = 1):
         "t.created_at FROM tracked_cases t LEFT JOIN users u ON u.bale_id=t.bale_id "
         "ORDER BY t.created_at DESC LIMIT ? OFFSET ?", (limit, offset))
     return {"total": total, "rows": _row_fa(rows, "last_checked", "created_at", "last_change")}
+
+
+# ── پشتیبانی (گفتگوی کاربر ↔ مدیر) ─────────────────────────────────────────
+@app.get("/api/support")
+async def support_list(request: Request, q: str = "", page: int = 1):
+    """فهرست پیام‌های پشتیبانی (کاربر → مدیر و پاسخ‌های مدیر → کاربر)."""
+    require_auth(request)
+    d = db()
+    where, params = [], []
+    if q.strip():
+        like = _like(q)
+        cond = ("(CAST(m.bale_id AS TEXT) LIKE ? ESCAPE '\\' OR m.body LIKE ? ESCAPE '\\' "
+                "OR u.first_name LIKE ? ESCAPE '\\')")
+        where.append(cond)
+        params += [like, like, like]
+    w = ("WHERE " + " AND ".join(where)) if where else ""
+    total = (await d.one(
+        f"SELECT COUNT(*) c FROM support_messages m LEFT JOIN users u ON u.bale_id=m.bale_id {w}",
+        tuple(params)))["c"]
+    limit, offset = 30, (_page(page) - 1) * 30
+    rows = await d.all(
+        f"SELECT m.id, m.bale_id, u.first_name, m.sender, m.body, m.files, m.created_at "
+        f"FROM support_messages m LEFT JOIN users u ON u.bale_id=m.bale_id {w} "
+        f"ORDER BY m.id DESC LIMIT ? OFFSET ?", tuple(params + [limit, offset]))
+    for r in rows:
+        try:
+            files = json.loads(r.get("files") or "[]")
+        except Exception:
+            files = []
+        r["files_count"] = len(files)
+    return {"total": total, "rows": _row_fa(rows, "created_at")}
+
+
+@app.get("/api/support/stats")
+async def support_stats(request: Request):
+    require_auth(request)
+    d = db()
+    since24 = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=24)).isoformat(timespec="seconds")
+    total = (await d.one("SELECT COUNT(*) c FROM support_messages"))["c"]
+    today = (await d.one("SELECT COUNT(*) c FROM support_messages WHERE created_at>=?", (since24,)))["c"]
+    users = (await d.one("SELECT COUNT(DISTINCT bale_id) c FROM support_messages"))["c"]
+    return {"total": total, "today": today, "users": users}
 
 
 # ── پیام همگانی ────────────────────────────────────────────────────────────

@@ -11,7 +11,7 @@ from ..services.flow import RunCtx, run_with_browser
 from ..services.session import Job, JobCancelled, UserTimeout, jobs
 from ..utils import (fmt_toman, to_en_digits, to_fa_digits, validate_archive_number, validate_case_number)
 from .common import safe_answer, start_job
-from .payment import show_invoice
+from .payment import offer_payment
 
 router = Router(name="turn")
 
@@ -159,7 +159,7 @@ async def _new(m, db):
                     job.chat_id, T.WALLET_ALL,
                     reply_markup=K.inline([[("▶️ شروع ثبت نوبت", f"turn:go:{inv['code']}")]]))
                 return
-        await show_invoice(job.bot, job.chat_id, inv)
+        await offer_payment(job.bot, db, job.chat_id, inv)
 
     start_job(m, db, "turn_prepare", coro)
 

@@ -42,6 +42,7 @@
       <a href="#errors" data-sec="errors"><span>⚠</span> خطاها</a>
       <a href="#notices" data-sec="notices"><span>✉</span> ابلاغیه‌ها</a>
       <a href="#cases" data-sec="cases"><span>📂</span> پرونده‌های پیگیری</a>
+      <a href="#support" data-sec="support"><span>🛟</span> پشتیبانی</a>
       <a href="#broadcast" data-sec="broadcast"><span>📡</span> پیام همگانی</a>
       <a href="#beta" data-sec="beta"><span>🧪</span> فهرست بتا</a>
       <a href="#settings" data-sec="settings"><span>⚙</span> تنظیمات</a>
@@ -119,12 +120,14 @@
         <div class="toolbar">
           <input id="invSearch" class="in" placeholder="جستجو: کد فاکتور / آیدی / نام">
           <select id="invStatus" class="in slim">
-            <option value="">در انتظار بررسی</option>
+            <option value="">غیر از منقضی</option>
             <option value="receipt_sent">رسید ارسال‌شده</option>
             <option value="shortfall_wait">در انتظار کسری</option>
             <option value="pending">پرداخت نشده</option>
             <option value="approved">تأییدشده</option>
+            <option value="used">مصرف‌شده (نوبت ثبت‌شده)</option>
             <option value="rejected">ردشده</option>
+            <option value="expired">منقضی</option>
             <option value="all">همه</option>
           </select>
           <button class="btn btn-primary" data-act="search-inv">جستجو</button>
@@ -210,6 +213,27 @@
             <span id="casePageInfo" class="pager-info"></span>
             <button class="btn btn-ghost" data-act="case-next">بعدی ←</button></div>
         </div>
+      </section>
+
+      <!-- پشتیبانی -->
+      <section id="sec-support" class="sec hidden">
+        <div class="toolbar">
+          <input id="supSearch" class="in" placeholder="جستجو: آیدی کاربر / نام / متن پیام">
+          <button class="btn btn-primary" data-act="search-support">جستجو</button>
+        </div>
+        <div class="card table-wrap">
+          <table id="supTable" class="tbl">
+            <thead><tr>
+              <th>#</th><th>کاربر</th><th>فرستنده</th><th>متن پیام</th>
+              <th>پیوست</th><th>زمان</th><th>اقدام</th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+          <div class="pager"><button class="btn btn-ghost" data-act="sup-prev">→ قبلی</button>
+            <span id="supPageInfo" class="pager-info"></span>
+            <button class="btn btn-ghost" data-act="sup-next">بعدی ←</button></div>
+        </div>
+        <p class="hint">🛟 در بخش پشتیبانی، پیام کاربر و پاسخ مدیر پس از «تایید» ارسال می‌شوند؛ پاسخ‌گویی از داخل بله با دکمه‌ی «↩️ پاسخ به کاربر» انجام می‌شود.</p>
       </section>
 
       <!-- پیام همگانی -->

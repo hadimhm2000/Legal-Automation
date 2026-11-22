@@ -17,7 +17,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from legal_bot import config
 from legal_bot.db import DB
-from legal_bot.handlers import admin, cases, job_input, notices, payment, plans, start, turn
+from legal_bot.handlers import admin, cases, job_input, notices, payment, plans, start, support, turn
 from legal_bot.handlers.common import BetaGate
 from legal_bot.services import error_reporter, scheduler
 from legal_bot.services.bale_session import BaleDirectUploadSession
@@ -69,9 +69,10 @@ def build_dispatcher(db) -> Dispatcher:
     gate = BetaGate()
     dp.message.outer_middleware(gate)
     dp.callback_query.outer_middleware(gate)
-    # ترتیب مهم است: پاسخ‌های Job و مدیر اول، fallback آخر
-    for r in (admin.router, job_input.router, payment.router, start.router, plans.router, notices.router,
-              cases.router, turn.router, job_input.fallback):
+    # ترتیب مهم است: پاسخ‌های Job و مدیر اول، پیش‌نویس پشتیبانی قبل از پرداخت (رسید)،
+    # منوها، و fallback آخر
+    for r in (admin.router, job_input.router, support.router, payment.router, start.router, plans.router,
+              notices.router, cases.router, turn.router, job_input.fallback):
         dp.include_router(r)
 
     @dp.errors()

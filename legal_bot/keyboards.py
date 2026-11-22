@@ -14,7 +14,7 @@ def inline(rows):
 
 def main_menu():
     return reply([[T.M_NOTICES], [T.M_CASES], [T.M_TURN], [T.M_REMINDERS, T.M_SUB],
-                  [T.M_GUIDE, T.M_CANCEL], [T.M_WIPE]])
+                  [T.M_GUIDE, T.M_SUPPORT], [T.M_CANCEL, T.M_WIPE]])
 
 
 def notices_menu():

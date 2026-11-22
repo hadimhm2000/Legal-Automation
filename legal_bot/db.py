@@ -181,6 +181,14 @@ CREATE TABLE IF NOT EXISTS wallet_tx (
 );
 CREATE TABLE IF NOT EXISTS beta_allow (bale_id INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS support_messages (      -- بخش پشتیبانی: گفتگوی کاربر و مدیر
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    bale_id INTEGER,          -- کاربرِ طرف گفتگو
+    sender TEXT,              -- user | admin
+    body TEXT,                -- متن پیام (چند خطی)
+    files TEXT,               -- JSON: [{file_id, kind, file_name}]
+    created_at TEXT
+);
 """
 
 
@@ -211,6 +219,9 @@ _INV_COLS = {
     "plan": "TEXT", "cycle": "TEXT", "shortfall_toman": "INTEGER",
     "shortfall_receipt_file_id": "TEXT", "shortfall_receipt_file_unique_id": "TEXT",
     "wallet_used": "INTEGER DEFAULT 0",       # مبلغ کسرشده از کیف پول برای این فاکتور
+    # ── پرداخت الگوی ربات اصلی: درگاه بله + سقوط خودکار به کارت‌به‌کارت ──
+    "gateway_sent_at": "TEXT",               # زمان ارسال فاکتور درگاه بله (sendInvoice)
+    "card_sent_at": "TEXT",                  # زمان فعال‌سازی تصویر کارت‌به‌کارت (پس از مهلت درگاه)
 }
 
 

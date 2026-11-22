@@ -1,5 +1,13 @@
-"""پرداخت کارت‌به‌کارت (همان الگوی ربات اصلی online.judicial.services.ble — فقط بخش کارت‌به‌کارت):
+"""پرداخت (الگوی ربات اصلی online.judicial.services.ble — اصلاحیه):
 
+  ۱) برای هر پرداخت ابتدا فاکتور صادر می‌شود (create_invoice).
+  ۲) اگر توکن درگاه بله (BALE_WALLET_TOKEN) تنظیم شده باشد، فاکتور از طریق درگاه
+     (sendInvoice) ارسال می‌شود؛ وگرنه مستقیماً کارت‌به‌کارت همان لحظه فعال می‌شود.
+  ۳) پرداخت درگاهی ← تایید خودکار (successful_payment) و فعال‌سازی اشتراک یا آماده‌شدن نوبت.
+  ۴) اگر کاربر تا PAY_CARD_FALLBACK_MINUTES دقیقه (پیش‌فرض ۱۰) از درگاه پرداخت نکند،
+     تصویر کارت‌به‌کارت به‌صورت خودکار ارسال/فعال می‌شود (حلقه‌ی card_fallback_tick).
+
+  کارت‌به‌کارت (همان الگوی قبلی):
   فاکتور + تصویر کارت بانکی ← دکمه‌های «کپی شماره کارت» / «کپی مبلغ» / «ارسال تصویر رسید»
   ← کاربر عکس یا فایل تصویر/PDF رسید را می‌فرستد ← رسید با جزئیات برای مدیر می‌رود
   ← مدیر: ✅ تایید / ❌ رد (با دلیل) / 💸 کسری (مبلغ واریزی کمتر از فاکتور)
@@ -11,7 +19,7 @@ import asyncio
 import logging
 
 from aiogram import F, Router
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, LabeledPrice, Message
 
 from .. import config, keyboards as K, texts as T
 from ..db import parse_iso
@@ -88,19 +96,176 @@ async def _card_image(amount_toman: int) -> bytes | None:
         return None
 
 
-async def show_invoice(bot, chat_id: int, inv):
-    """فاکتور کارت‌به‌کارت: تصویر کارت بانکی + دکمه‌های کپی/ارسال رسید (مثل ربات اصلی)."""
+async def show_invoice(bot, chat_id: int, inv, *, fallback: bool = False):
+    """فاکتور کارت‌به‌کارت: تصویر کارت بانکی + دکمه‌های کپی/ارسال رسید (مثل ربات اصلی).
+
+    fallback=True: پیامِ پس از پایان مهلت درگاه بله — با توضیحِ چرکی در بالای کپشن.
+    """
+    caption = invoice_caption(inv)
+    if fallback:
+        caption = T.CARD_FALLBACK_NOTE + "\n\n" + caption
     img = await _card_image(_due_toman(inv))
     if img:
         try:
             await bot.send_photo(chat_id, BufferedInputFile(img, "card.png"),
-                                 caption=invoice_caption(inv), parse_mode="Markdown",
+                                 caption=caption, parse_mode="Markdown",
                                  reply_markup=_offer_kb(inv["code"]))
             return
         except Exception as e:
             log.warning("send_photo failed (%s) — fallback to text", type(e).__name__)
-    await bot.send_message(chat_id, invoice_caption(inv), parse_mode="Markdown",
+    await bot.send_message(chat_id, caption, parse_mode="Markdown",
                            reply_markup=_offer_kb(inv["code"]))
+
+
+# ── درگاه بله (sendInvoice) + تایید خودکار + سقوط به کارت‌به‌کارت ──────────
+def _gateway_title(inv) -> str:
+    """عنوان کوتاه فاکتور درگاه (سقف ۳۲ نویسه)."""
+    return f"فاکتور {inv['code']}"[:32]
+
+
+def _gateway_description(inv) -> str:
+    due = _due_toman(inv)
+    desc = (f"{KIND_FA.get(inv['kind'], inv['kind'])}\n" + _plan_line(inv)
+            + f"مبلغ: {due:,} تومان ({due * 10:,} ریال)".replace(",", "٬"))
+    return desc[:255]
+
+
+async def send_gateway_invoice(bot, chat_id: int, inv) -> bool:
+    """ارسال فاکتور از طریق درگاه پرداخت بله (sendInvoice — الگوی ربات اصلی).
+
+    payload فاکتور `pay:<کد>` است؛ پرداخت موفق با پیام successful_payment برمی‌گردد
+    و به‌صورت خودکار تایید می‌شود. هر خطا فقط لاگ می‌شود و False برمی‌گرداند.
+    """
+    due = _due_toman(inv)
+    if due <= 0 or not config.BALE_WALLET_TOKEN:
+        return False
+    try:
+        await bot.send_invoice(
+            chat_id=chat_id,
+            title=_gateway_title(inv),
+            description=_gateway_description(inv),
+            payload=f"pay:{inv['code']}",
+            provider_token=config.BALE_WALLET_TOKEN,
+            currency="IRR",
+            prices=[LabeledPrice(label=KIND_FA.get(inv["kind"], "پرداخت")[:30], amount=due * 10)],
+        )
+        return True
+    except Exception as e:
+        log.warning("sendInvoice failed: %s: %s", type(e).__name__, str(e)[:150])
+        return False
+
+
+async def offer_payment(bot, db, chat_id: int, inv):
+    """الگوی کامل صدور پرداخت (دستور کارفرما — الگو از ربات اصلی):
+
+    ۱) فاکتور از قبل صادر شده است (create_invoice).
+    ۲) درگاه بله اگر تنظیم شده ← فاکتور درگاهی؛ پرداخت ← تایید خودکار.
+    ۳) اگر تا PAY_CARD_FALLBACK_MINUTES دقیقه پرداخت نکرد ← تصویر کارت‌به‌کارت
+       به‌صورت خودکار توسط card_fallback_tick ارسال می‌شود.
+    ۴) بدون توکن درگاه ← همان لحظه کارت‌به‌کارت (رفتار قبلی ربات).
+    """
+    if config.BALE_WALLET_TOKEN and _due_toman(inv) > 0 \
+            and inv["status"] in ("pending", "shortfall_wait"):
+        if await send_gateway_invoice(bot, chat_id, inv):
+            await db.execute("UPDATE invoices SET gateway_sent_at=? WHERE code=?",
+                             (sub.now_iso(), inv["code"]))
+            what = "ثبت نوبت" if inv["kind"] == "turn" else "اشتراک"
+            await bot.send_message(chat_id, T.GATEWAY_INVOICE_SENT.format(
+                what=what, minutes=to_fa_digits(config.PAY_CARD_FALLBACK_MINUTES)))
+            return "gateway"
+    # درگاه تنظیم نشده یا ارسالش ناموفق بود ← کارت‌به‌کارت همان لحظه فعال می‌شود
+    await show_invoice(bot, chat_id, inv)
+    await db.execute("UPDATE invoices SET card_sent_at=? WHERE code=? AND card_sent_at IS NULL",
+                     (sub.now_iso(), inv["code"]))
+    return "card"
+
+
+async def card_fallback_tick(bot, db) -> int:
+    """حلقه‌ی پس‌زمینه (از scheduler صدا زده می‌شود):
+
+    فاکتورهایی که فاکتور درگاهی‌شان ارسال شده ولی تا PAY_CARD_FALLBACK_MINUTES دقیقه
+    پرداخت نشده‌اند ← تصویر کارت‌به‌کارت به‌صورت خودکار ارسال می‌شود (فقط یک بار).
+    """
+    now = sub.utcnow()
+    rows = await db.all(
+        "SELECT * FROM invoices WHERE status IN ('pending','shortfall_wait') "
+        "AND card_sent_at IS NULL AND gateway_sent_at IS NOT NULL AND expires_at>?",
+        (now.isoformat(),))
+    sent = 0
+    for inv in rows:
+        # مبدأ مهلت: ایجاد فاکتور؛ در حالت کسری، اعلام کسری (reviewed_at)
+        base = inv["reviewed_at"] if inv["status"] == "shortfall_wait" and inv["reviewed_at"] \
+            else inv["created_at"]
+        started = parse_iso(base)
+        if not started or (now - started).total_seconds() < config.PAY_CARD_FALLBACK_MINUTES * 60:
+            continue
+        cur = await db.execute("UPDATE invoices SET card_sent_at=? WHERE code=? AND card_sent_at IS NULL "
+                               "AND status IN ('pending','shortfall_wait')",
+                               (sub.now_iso(), inv["code"]))
+        if cur.rowcount != 1:      # همین لحظه پرداخت کرد یا قبلاً کارت رفته
+            continue
+        u = await db.get_user(inv["bale_id"])
+        if not u or not u.get("chat_id"):
+            continue
+        await show_invoice(bot, u["chat_id"], inv, fallback=True)
+        sent += 1
+    return sent
+
+
+@router.message(F.successful_payment)
+async def gateway_payment_done(message: Message, db):
+    """پرداخت موفق درگاه بله ← تایید خودکار فاکتور و فعال‌سازی اشتراک/نوبت.
+
+    (دستور کارفرما: «به صورت خودکار بعد از پرداخت، پرداخت تایید شود و برود برای
+    نوبت یا اشتراک فعال شود» — دقیقاً مثل successful_payment ربات اصلی.)
+    """
+    sp = message.successful_payment
+    payload = str(sp.invoice_payload or "")
+    if not payload.startswith("pay:"):
+        return
+    code = payload.split(":", 1)[1]
+    inv = await db.one("SELECT * FROM invoices WHERE code=? AND bale_id=?",
+                       (code, message.from_user.id))
+    if not inv:
+        await message.answer("✅ پرداخت شما دریافت شد. فاکتور متناظری پیدا نشد؛ "
+                             "در صورت مغایرت با پشتیبانی تماس بگیرید.")
+        return
+    if inv["status"] in ("approved", "used"):
+        # پرداخت تکراری (الگوی ربات اصلی): به مدیر هشدار داده می‌شود
+        try:
+            await message.bot.send_message(
+                config.ADMIN_ID,
+                "⚠️ پرداخت تکراری درگاه بله\n\n"
+                f"👤 کاربر: {message.from_user.full_name or ''} ({inv['bale_id']})\n"
+                f"🧾 فاکتور {code} قبلاً «{'مصرف‌شده' if inv['status'] == 'used' else 'تایید‌شده'}» "
+                f"بود و کاربر دوباره از درگاه پرداخت کرد.\n"
+                "❗️ در صورت واریز واقعی، مبلغ را عودت دهید.")
+        except Exception:
+            pass
+        await message.answer("✅ پرداخت شما دریافت شد؛ این فاکتور قبلاً پرداخت شده بود.\n"
+                             "در صورت واریز دوباره، مبلغ توسط پشتیبانی پیگیری و عودت داده می‌شود.")
+        return
+    fresh = await sub.approve_invoice(db, code, config.ADMIN_ID)
+    if not fresh:
+        await message.answer("✅ پرداخت شما دریافت شد و به‌زودی بررسی می‌شود.")
+        return
+    await message.answer(T.GATEWAY_PAID_AUTO)
+    # اطلاع خودکار به مدیر (پرداخت درگاهی نیاز به بررسی رسید ندارد)
+    charge = str(getattr(sp, "telegram_payment_charge_id", "") or "")
+    try:
+        await message.bot.send_message(
+            config.ADMIN_ID,
+            "✅ پرداخت درگاه بله (تایید خودکار)\n\n"
+            f"🧾 فاکتور {code} — {KIND_FA.get(inv['kind'], inv['kind'])}\n"
+            + _plan_line(inv)
+            + f"💰 مبلغ فاکتور: {fmt_toman(int(inv['amount_toman'] or 0))}\n"
+            f"👤 کاربر: {message.from_user.full_name or '—'} ({inv['bale_id']})\n"
+            + (f"🔖 شناسه تراکنش درگاه: {charge}\n" if charge else "")
+            + ("🗓 فاکتور نوبت فعال شد و کاربر می‌تواند ثبت نوبت را شروع کند."
+               if inv["kind"] == "turn" else "💳 پلن/اشتراک کاربر به‌صورت خودکار فعال شد."))
+    except Exception:
+        pass
+    await notify_paid(message.bot, db, fresh)
 
 
 # ── دکمه‌های کاربر: کپی شماره کارت / کپی مبلغ / مجوز ارسال رسید ────────────
@@ -284,16 +449,24 @@ async def admin_ok(cb: CallbackQuery, db):
         await cb.message.answer("⚠️ فاکتور تایید شد، اما کاربر chat_id ندارد؛ خودتان به او اطلاع دهید.")
         return
     try:
-        await _notify_approved(cb, db, inv, user, code)
+        await notify_paid(cb.bot, db, inv, user)
     except Exception as e:      # کاربر ربات را بلاک کرده/خطای شبکه: تایید انجام شده، فقط اطلاع‌رسانی نرسید
         log.warning("approve notify failed: %s", type(e).__name__)
         await cb.message.answer("⚠️ فاکتور تایید شد، اما ارسال پیام به کاربر ناموفق بود.")
 
 
-async def _notify_approved(cb, db, inv, user, code):
+async def notify_paid(bot, db, inv, user=None):
+    """پیام مشترک «پرداخت تایید شد» بعد از هر تایید (دکمه مدیر / پنل / درگاه خودکار):
+
+    نوبت ← دکمه‌ی شروع ثبت؛ پلن ← جزئیات فعال‌سازی؛ مبنای مشترک همه‌ی مسیرها.
+    """
+    user = user or await db.get_user(inv["bale_id"])
+    if not user or not user.get("chat_id"):
+        return
+    code = inv["code"]
     if inv["kind"] == "turn":
-        await cb.bot.send_message(user["chat_id"], "✅ پرداخت شما تایید شد. برای شروع ثبت نوبت دکمه‌ی زیر را بزنید.",
-                                  reply_markup=K.inline([[("▶️ شروع ثبت نوبت", f"turn:go:{code}")]]))
+        await bot.send_message(user["chat_id"], "✅ پرداخت شما تایید شد. برای شروع ثبت نوبت دکمه‌ی زیر را بزنید.",
+                              reply_markup=K.inline([[("▶️ شروع ثبت نوبت", f"turn:go:{code}")]]))
         return
     s = await sub.get(db, inv["bale_id"])
     m = sub.plan_meta(s["plan"])
@@ -310,9 +483,9 @@ async def _notify_approved(cb, db, inv, user, code):
                 f"📂 پیگیری خودکار تا {to_fa_digits(m.get('cases', 0))} پرونده")
     else:
         body = "✅ پرداخت تایید شد."
-    await cb.bot.send_message(user["chat_id"], body + "\n\n" +
-                              "مرحله‌ی بعد: در هر بررسی، ربات برای ورود به اطلاعات سامانه نیاز دارد؛ "
-                              "این اطلاعات ذخیره نمی‌شود.", reply_markup=K.main_menu())
+    await bot.send_message(user["chat_id"], body + "\n\n" +
+                          "مرحله‌ی بعد: در هر بررسی، ربات برای ورود به اطلاعات سامانه نیاز دارد؛ "
+                          "این اطلاعات ذخیره نمی‌شود.", reply_markup=K.main_menu())
 
 
 @router.callback_query(F.data.startswith("adm:no:"))
@@ -418,4 +591,4 @@ async def admin_shortfall_amount(message: Message, db):
         f"💸 باقی‌مانده‌ی قابل پرداخت: {fmt_toman(int(raw))}\n"
         "لطفاً مبلغ باقی‌مانده را واریز کنید و تصویر رسید آن را بفرستید "
         "(دکمه‌ی «ارسال تصویر رسید» در فاکتور زیر):")
-    await show_invoice(message.bot, user["chat_id"], inv)
+    await offer_payment(message.bot, db, user["chat_id"], inv)

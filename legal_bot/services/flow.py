@@ -25,6 +25,7 @@ class RunCtx:
         self.done_numbers: list[str] = []        # شماره‌هایی که پردازششان تمام شد (موفق یا ناموفق)
         self.booked_numbers: list[str] = []      # نوبت‌های ثبت‌شده
         self.sys_failed_numbers: list[str] = []  # شماره‌هایی که با خطای سامانه ثبت نشدند (چندنوبتی)
+        self.page = None                          # صفحه‌ی فعال مرورگر — برای اسکرین‌شات لحظه‌ی خطا
 
     async def start(self):
         self.run_id = await self.db.create_run(self.job.user_id, self.kind, self.trigger)
@@ -35,12 +36,28 @@ class RunCtx:
         if self.run_id:
             await self.db.run_step(self.run_id, code)
 
+    async def error_screenshot(self) -> bytes | None:
+        """اسکرین‌شاتِ صفحه‌ی فعال در همان لحظه‌ی خطا (اگر مرورگر باز بود).
+
+        هر خطایی (صفحه بسته/کرش) بی‌صدا نادیده گرفته می‌شود — گزارش متن اصلی است.
+        """
+        page = getattr(self, "page", None)
+        if page is None or not config.ERROR_SHOT_TO_ADMIN:
+            return None
+        try:
+            return await page.screenshot(timeout=10_000)
+        except Exception:
+            return None
+
     async def report(self, category, message=""):
         self.error_category = category
         r = await self.db.one("SELECT steps_ok FROM check_runs WHERE id=?", (self.run_id,)) if self.run_id else None
-        await error_reporter.report(self.bot, self.db, run_id=self.run_id, user_id=self.job.user_id,
-                                    step=self.cur_step, category=category, message=message,
-                                    steps_ok=(r or {}).get("steps_ok", ""))
+        await error_reporter.report(
+            self.bot, self.db, run_id=self.run_id, user_id=self.job.user_id,
+            step=self.cur_step, category=category, message=message,
+            steps_ok=(r or {}).get("steps_ok", ""),
+            screenshot=await self.error_screenshot(),
+            kind=self.kind, user_name=getattr(self.job, "user_name", ""))
 
 
 class QueueNotice:
@@ -102,10 +119,12 @@ async def run_with_browser(ctx: RunCtx, target: str, work, *, consent=True):
             await notice.started()
             login = SanaLogin(ctx, br, target)
             page = await login.run()
+            ctx.page = page          # اسکرین‌شات لحظه‌ی خطا از همین صفحه گرفته می‌شود
             await job.say(T.LOGIN_OK)
             await ctx.step("L09")
             await work(ctx, br, login, page)
             await ctx.step("L12")
+        ctx.page = None
         await ctx.db.finish_run(ctx.run_id, "done", new_items=ctx.new_items)
         # قاعده ۱: هر استعلامِ موفقِ دستی یک‌بار از سهمیه کم می‌شود؛
         # پیگیری خودکار زمان‌بندی‌شده سهمیه ندارد (قاعده ۲).
